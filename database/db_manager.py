@@ -7,7 +7,7 @@ Reusable: YES - Copy for any project with database
 
 import os
 import sqlite3
-import psycopg
+import psycopg2
 from contextlib import contextmanager
 import logging
 
@@ -47,7 +47,7 @@ class DatabaseManager:
             if self.db_url.startswith('postgres://'):
                 self.db_url = self.db_url.replace('postgres://', 'postgresql://', 1)
             
-            conn = psycopg.connect(
+            conn = psycopg2.connect(
                 self.db_url,
                 connect_timeout=10,
                 sslmode='require'
@@ -268,3 +268,4 @@ class DatabaseManager:
             
 
             return size_bytes / 1024 / 1024  # Convert to MB
+
