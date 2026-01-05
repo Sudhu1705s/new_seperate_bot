@@ -298,13 +298,33 @@ class PostsDB:
         return None
     
     def get_next_scheduled_post(self):
-        """Get time of next scheduled post"""
+        """
+        Get time of next scheduled post
+        FIXED: Handle both string and datetime return
+        """
         with self.db.get_db() as conn:
             c = conn.cursor()
             c.execute('SELECT scheduled_time FROM posts WHERE posted = 0 ORDER BY scheduled_time LIMIT 1')
             result = c.fetchone()
-            if result:
-                return datetime.fromisoformat(result[0])
+            
+            if not result:
+                return None
+            
+            scheduled_value = result[0]
+            
+            # If already datetime, return it
+            if isinstance(scheduled_value, datetime):
+                return scheduled_value
+            
+            # If string, parse it
+            if isinstance(scheduled_value, str):
+                try:
+                    return datetime.fromisoformat(scheduled_value)
+                except Exception as e:
+                    logger.error(f"Failed to parse scheduled_time in get_next_scheduled_post: {scheduled_value}, error: {e}")
+                    return None
+            
+            logger.error(f"Invalid scheduled_time type in get_next_scheduled_post: {type(scheduled_value)}")
             return None
     
     def cleanup_old_posts(self, minutes_old=30):
