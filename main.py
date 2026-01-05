@@ -37,7 +37,7 @@ from core.rate_limiter import AdaptiveRateLimiter
 from core.retry_system import SmartRetrySystem
 from core.sender import ParallelSender
 from core.scheduler_core import SchedulerCore
-from handlers.command_handlers import register_command_handlers
+from handlers.command_handlers import register_command_handlers, stats_command, channels_command, list_posts
 from handlers.message_handlers import register_message_handlers
 from handlers.callback_handlers import register_callback_handlers
 
