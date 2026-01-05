@@ -47,8 +47,25 @@ class SchedulerCore:
             logger.warning("⚠️  Recurring posts feature not available")
     
     def datetime_fromisoformat(self, iso_string):
-        """Helper to parse ISO format datetime strings"""
-        return datetime.fromisoformat(iso_string)
+        """
+        Helper to parse ISO format datetime strings
+        FIXED: Handle both string and datetime objects
+        """
+        if iso_string is None:
+            return None
+        
+        # If already datetime, return as-is
+        if isinstance(iso_string, datetime):
+            return iso_string
+        
+        # If string, parse it
+        if isinstance(iso_string, str):
+            try:
+                return datetime.fromisoformat(iso_string)
+            except:
+                return None
+        
+        return None
     
     async def process_due_posts(self, bot):
         """
@@ -71,7 +88,11 @@ class SchedulerCore:
             last_batch_id = None
             
             for post in posts:
-                scheduled_time = datetime.fromisoformat(post['scheduled_time'])
+                # FIXED: Handle both string and datetime
+                scheduled_time = self.datetime_fromisoformat(post.get('scheduled_time'))
+                if scheduled_time is None:
+                    continue
+                
                 batch_id = post.get('batch_id')
                 
                 if last_time is None:
