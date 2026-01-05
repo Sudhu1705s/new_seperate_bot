@@ -2,14 +2,12 @@
 File: core/scheduler_core.py
 Location: telegram_scheduler_bot/core/scheduler_core.py
 Purpose: Main scheduler orchestration class
+FIXED: Made recurring posts optional
 """
 
 import asyncio
 from datetime import datetime, timedelta
 import logging
-from features import RecurringPostsSystem
-
-
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +36,15 @@ class SchedulerCore:
         self.user_sessions = {}
         self.emergency_stopped = False
         self.posting_lock = asyncio.Lock()
-        self.recurring_system = RecurringPostsSystem(db_manager, posts_db, channels_db)
+        
+        # FIXED: Initialize recurring system only if feature exists
+        try:
+            from features.recurring_posts import RecurringPostsSystem
+            self.recurring_system = RecurringPostsSystem(db_manager, posts_db, channels_db)
+            logger.info("✅ Recurring posts system initialized")
+        except ImportError:
+            self.recurring_system = None
+            logger.warning("⚠️  Recurring posts feature not available")
     
     def datetime_fromisoformat(self, iso_string):
         """Helper to parse ISO format datetime strings"""
