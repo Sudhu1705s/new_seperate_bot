@@ -2,6 +2,7 @@
 File: main.py
 Location: telegram_scheduler_bot/main.py
 Purpose: Main entry point for the bot
+FIXED: Import errors and initialization issues
 """
 
 import os
@@ -27,17 +28,28 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Import all modules
-from config import BOT_TOKEN, ADMIN_ID, INITIAL_CHANNEL_IDS
-from database import DatabaseManager, PostsDB, ChannelsDB
-from core import AdaptiveRateLimiter, SmartRetrySystem, ParallelSender, SchedulerCore
-from handlers import register_all_handlers
+# FIXED: Proper imports
+from config.settings import BOT_TOKEN, ADMIN_ID, INITIAL_CHANNEL_IDS
+from database.db_manager import DatabaseManager
+from database.posts_db import PostsDB
+from database.channels_db import ChannelsDB
+from core.rate_limiter import AdaptiveRateLimiter
+from core.retry_system import SmartRetrySystem
+from core.sender import ParallelSender
+from core.scheduler_core import SchedulerCore
+from handlers.command_handlers import register_command_handlers
+from handlers.message_handlers import register_message_handlers
 
 async def post_init(application):
     """Initialize background tasks after bot starts"""
     scheduler = application.bot_data['scheduler']
     asyncio.create_task(scheduler.background_poster(application.bot))
+    
+    # FIXED: Start recurring posts checker
+    asyncio.create_task(scheduler.recurring_system.check_and_schedule_recurring(application.bot))
+    
     logger.info("✅ Background poster started")
+    logger.info("✅ Recurring posts checker started")
 
 def main():
     """Main entry point"""
@@ -53,11 +65,14 @@ def main():
     posts_db = PostsDB(db_manager)
     channels_db = ChannelsDB(db_manager)
     
-    # Add initial channels from environment
-    for channel_id in INITIAL_CHANNEL_IDS:
-        channels_db.add_channel(channel_id)
-    
-    logger.info(f"📢 Loaded {len(INITIAL_CHANNEL_IDS)} channels from environment")
+    # Add initial channels from environment (if any)
+    if INITIAL_CHANNEL_IDS:
+        for channel_id in INITIAL_CHANNEL_IDS:
+            if channel_id:  # FIXED: Check if not empty
+                channels_db.add_channel(channel_id)
+        logger.info(f"📢 Loaded {len(INITIAL_CHANNEL_IDS)} channels from environment")
+    else:
+        logger.info("📢 No initial channels in environment")
     
     # Initialize core systems
     rate_limiter = AdaptiveRateLimiter()
@@ -80,8 +95,9 @@ def main():
     # Store scheduler in bot_data for access in handlers
     app.bot_data['scheduler'] = scheduler
     
-    # Register all handlers
-    register_all_handlers(app, scheduler)
+    # FIXED: Register handlers properly
+    register_command_handlers(app, scheduler)
+    register_message_handlers(app, scheduler)
     
     logger.info("="*60)
     logger.info("✅ TELEGRAM SCHEDULER v2.0 STARTED")
@@ -89,7 +105,7 @@ def main():
     logger.info(f"👤 Admin ID: {ADMIN_ID}")
     logger.info(f"🌍 Timezone: UTC storage, IST display")
     logger.info(f"🚀 ALL 22 IMPROVEMENTS ACTIVE")
-    logger.info(f"📝 3 MODES: Bulk, Batch, Auto-Continuous + Recurring Posts")
+    logger.info(f"📋 3 MODES: Bulk, Batch, Auto-Continuous + Recurring Posts")
     logger.info("="*60)
     
     # Start bot
