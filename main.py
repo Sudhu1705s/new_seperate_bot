@@ -2,7 +2,7 @@
 File: main.py
 Location: telegram_scheduler_bot/main.py
 Purpose: Main entry point for the bot
-FIXED: Import errors and initialization issues
+FIXED: Removed recurring posts task until feature is implemented
 """
 
 import os
@@ -43,13 +43,14 @@ from handlers.message_handlers import register_message_handlers
 async def post_init(application):
     """Initialize background tasks after bot starts"""
     scheduler = application.bot_data['scheduler']
+    
+    # Start main background poster
     asyncio.create_task(scheduler.background_poster(application.bot))
-    
-    # FIXED: Start recurring posts checker
-    asyncio.create_task(scheduler.recurring_system.check_and_schedule_recurring(application.bot))
-    
     logger.info("✅ Background poster started")
-    logger.info("✅ Recurring posts checker started")
+    
+    # REMOVED: Recurring posts checker (not yet implemented)
+    # asyncio.create_task(scheduler.recurring_system.check_and_schedule_recurring(application.bot))
+    # logger.info("✅ Recurring posts checker started")
 
 def main():
     """Main entry point"""
@@ -68,7 +69,7 @@ def main():
     # Add initial channels from environment (if any)
     if INITIAL_CHANNEL_IDS:
         for channel_id in INITIAL_CHANNEL_IDS:
-            if channel_id:  # FIXED: Check if not empty
+            if channel_id:  # Check if not empty
                 channels_db.add_channel(channel_id)
         logger.info(f"📢 Loaded {len(INITIAL_CHANNEL_IDS)} channels from environment")
     else:
@@ -95,7 +96,7 @@ def main():
     # Store scheduler in bot_data for access in handlers
     app.bot_data['scheduler'] = scheduler
     
-    # FIXED: Register handlers properly
+    # Register handlers
     register_command_handlers(app, scheduler)
     register_message_handlers(app, scheduler)
     
@@ -104,8 +105,8 @@ def main():
     logger.info(f"📢 Channels: {channels_db.get_channel_count()}")
     logger.info(f"👤 Admin ID: {ADMIN_ID}")
     logger.info(f"🌍 Timezone: UTC storage, IST display")
-    logger.info(f"🚀 ALL 22 IMPROVEMENTS ACTIVE")
-    logger.info(f"📋 3 MODES: Bulk, Batch, Auto-Continuous + Recurring Posts")
+    logger.info(f"🚀 3 MODES: Bulk, Batch, Auto-Continuous")
+    logger.info(f"⚠️  Recurring posts: Not yet implemented")
     logger.info("="*60)
     
     # Start bot
