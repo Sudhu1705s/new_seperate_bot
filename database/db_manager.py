@@ -2,12 +2,13 @@
 File: database/db_manager.py
 Location: telegram_scheduler_bot/database/db_manager.py
 Purpose: Universal database connection manager (PostgreSQL/SQLite)
-Reusable: YES - Copy for any project with database
+FIXED: PostgreSQL row factory for dictionary-like access
 """
 
 import os
 import sqlite3
 import psycopg2
+import psycopg2.extras
 from contextlib import contextmanager
 import logging
 
@@ -23,6 +24,7 @@ class DatabaseManager:
     - Auto-detection of database type
     - Table initialization
     - Database size calculation
+    - Dictionary-like row access for both databases
     
     Reusable: YES
     """
@@ -36,21 +38,25 @@ class DatabaseManager:
         """
         Context manager for database connections
         Automatically detects PostgreSQL or SQLite
+        Returns rows as dictionary-like objects
         
         Usage:
             with db_manager.get_db() as conn:
                 cursor = conn.cursor()
                 cursor.execute("SELECT * FROM posts")
+                row = cursor.fetchone()
+                print(row['id'])  # Works with both PostgreSQL and SQLite
         """
         if self.db_url:
-            # PostgreSQL connection
+            # PostgreSQL connection with DictCursor
             if self.db_url.startswith('postgres://'):
                 self.db_url = self.db_url.replace('postgres://', 'postgresql://', 1)
             
             conn = psycopg2.connect(
                 self.db_url,
                 connect_timeout=10,
-                sslmode='require'
+                sslmode='require',
+                cursor_factory=psycopg2.extras.RealDictCursor  # CRITICAL FIX
             )
             conn.autocommit = False
             try:
@@ -58,7 +64,7 @@ class DatabaseManager:
             finally:
                 conn.close()
         else:
-            # SQLite connection (fallback)
+            # SQLite connection with Row factory
             conn = sqlite3.connect(self.db_path)
             conn.row_factory = sqlite3.Row
             try:
@@ -73,7 +79,7 @@ class DatabaseManager:
     def init_database(self):
         """
         Initialize all database tables
-        Creates posts, channels, channel_failures, recycle_bin, and batch_config tables
+        Creates posts, channels, channel_failures, recycle_bin, and recurring_posts tables
         """
         with self.get_db() as conn:
             c = conn.cursor()
@@ -123,26 +129,8 @@ class DatabaseManager:
                         failed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     )
                 ''')
-                # Recurring posts table
-                c.execute('''
-
-                          CREATE TABLE IF NOT EXISTS recurring_posts (
-                          id {} PRIMARY KEY,
-                          pattern TEXT NOT NULL,
-                          time TEXT NOT NULL,
-                          day_of_week INTEGER,
-                          day_of_month INTEGER,
-                          message TEXT,
-                          media_type TEXT,
-                          media_file_id TEXT,
-                          caption TEXT,
-                          active INTEGER DEFAULT 1,
-                          last_posted TIMESTAMP,
-                          next_scheduled TIMESTAMP,
-                          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                          )
-                    '''.format('SERIAL' if is_pg else 'INTEGER AUTOINCREMENT'))
-                # NEW: Recycle bin for deleted channels (IMPROVEMENT #3)
+                
+                # Recycle bin for deleted channels
                 c.execute('''
                     CREATE TABLE IF NOT EXISTS recycle_bin (
                         id SERIAL PRIMARY KEY,
@@ -154,7 +142,7 @@ class DatabaseManager:
                     )
                 ''')
                 
-                # NEW: Batch config for auto-continuous mode (IMPROVEMENT #9)
+                # Batch config for auto-continuous mode
                 c.execute('''
                     CREATE TABLE IF NOT EXISTS batch_config (
                         id SERIAL PRIMARY KEY,
@@ -163,6 +151,25 @@ class DatabaseManager:
                         interval_minutes INTEGER NOT NULL,
                         minute_mark INTEGER DEFAULT 0,
                         active INTEGER DEFAULT 1,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                ''')
+                
+                # Recurring posts table
+                c.execute('''
+                    CREATE TABLE IF NOT EXISTS recurring_posts (
+                        id SERIAL PRIMARY KEY,
+                        pattern TEXT NOT NULL,
+                        time TEXT NOT NULL,
+                        day_of_week INTEGER,
+                        day_of_month INTEGER,
+                        message TEXT,
+                        media_type TEXT,
+                        media_file_id TEXT,
+                        caption TEXT,
+                        active INTEGER DEFAULT 1,
+                        last_posted TIMESTAMP,
+                        next_scheduled TIMESTAMP,
                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     )
                 ''')
@@ -212,7 +219,6 @@ class DatabaseManager:
                     )
                 ''')
                 
-                # NEW: Recycle bin for deleted channels (IMPROVEMENT #3)
                 c.execute('''
                     CREATE TABLE IF NOT EXISTS recycle_bin (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -224,7 +230,6 @@ class DatabaseManager:
                     )
                 ''')
                 
-                # NEW: Batch config for auto-continuous mode (IMPROVEMENT #9)
                 c.execute('''
                     CREATE TABLE IF NOT EXISTS batch_config (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -233,6 +238,24 @@ class DatabaseManager:
                         interval_minutes INTEGER NOT NULL,
                         minute_mark INTEGER DEFAULT 0,
                         active INTEGER DEFAULT 1,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                ''')
+                
+                c.execute('''
+                    CREATE TABLE IF NOT EXISTS recurring_posts (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        pattern TEXT NOT NULL,
+                        time TEXT NOT NULL,
+                        day_of_week INTEGER,
+                        day_of_month INTEGER,
+                        message TEXT,
+                        media_type TEXT,
+                        media_file_id TEXT,
+                        caption TEXT,
+                        active INTEGER DEFAULT 1,
+                        last_posted TIMESTAMP,
+                        next_scheduled TIMESTAMP,
                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     )
                 ''')
@@ -261,11 +284,9 @@ class DatabaseManager:
             
             if self.is_postgres():
                 c.execute("SELECT pg_database_size(current_database())")
-                size_bytes = c.fetchone()[0]
+                size_bytes = c.fetchone()['pg_database_size']
             else:
                 c.execute("SELECT page_count * page_size as size FROM pragma_page_count(), pragma_page_size()")
-                size_bytes = c.fetchone()[0]
+                size_bytes = c.fetchone()['size']
             
-
             return size_bytes / 1024 / 1024  # Convert to MB
-
