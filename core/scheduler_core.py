@@ -76,7 +76,11 @@ class SchedulerCore:
             return
         
         async with self.posting_lock:
-            posts = self.posts_db.get_due_posts(lookahead_seconds=30)
+            try:
+                posts = self.posts_db.get_due_posts(lookahead_seconds=30)
+            except Exception as e:
+                logger.error(f"❌ Error in get_due_posts: {e}", exc_info=True)
+                return
             
             if not posts:
                 return
@@ -88,10 +92,10 @@ class SchedulerCore:
             last_batch_id = None
             
             for post in posts:
-                # FIXED: Ultra-safe datetime handling
-                scheduled_time_value = post.get('scheduled_time')
-                
+                # ULTRA-SAFE: Wrap EVERYTHING in try-catch
                 try:
+                    scheduled_time_value = post.get('scheduled_time')
+                    
                     # If it's already a datetime object, use it directly
                     if isinstance(scheduled_time_value, datetime):
                         scheduled_time = scheduled_time_value
@@ -100,10 +104,10 @@ class SchedulerCore:
                         scheduled_time = datetime.fromisoformat(scheduled_time_value)
                     # If it's None or something else, skip this post
                     else:
-                        logger.warning(f"Post {post.get('id')} has invalid scheduled_time: {scheduled_time_value} (type: {type(scheduled_time_value)})")
+                        logger.error(f"❌ Post {post.get('id')} has invalid scheduled_time: {scheduled_time_value} (type: {type(scheduled_time_value)})")
                         continue
                 except Exception as e:
-                    logger.error(f"Failed to parse scheduled_time for post {post.get('id')}: {e}")
+                    logger.error(f"❌ Error processing post {post.get('id')}: {e}", exc_info=True)
                     continue
                 
                 batch_id = post.get('batch_id')
@@ -186,6 +190,9 @@ class SchedulerCore:
                     cleanup_counter = 0
                     
             except Exception as e:
-                logger.error(f"Background task error: {e}")
+                # ULTRA-DETAILED ERROR LOGGING
+                import traceback
+                logger.error(f"❌❌❌ Background task error: {e}")
+                logger.error(f"Full traceback:\n{traceback.format_exc()}")
             
             await asyncio.sleep(5)
