@@ -88,9 +88,20 @@ class SchedulerCore:
             last_batch_id = None
             
             for post in posts:
-                # FIXED: Handle both string and datetime
-                scheduled_time = self.datetime_fromisoformat(post.get('scheduled_time'))
-                if scheduled_time is None:
+                # FIXED: Handle both string and datetime objects
+                scheduled_time_value = post.get('scheduled_time')
+                
+                # Convert to datetime if needed
+                if isinstance(scheduled_time_value, datetime):
+                    scheduled_time = scheduled_time_value
+                elif isinstance(scheduled_time_value, str):
+                    try:
+                        scheduled_time = datetime.fromisoformat(scheduled_time_value)
+                    except:
+                        logger.error(f"Failed to parse scheduled_time: {scheduled_time_value}")
+                        continue
+                else:
+                    logger.error(f"Invalid scheduled_time type: {type(scheduled_time_value)}")
                     continue
                 
                 batch_id = post.get('batch_id')
