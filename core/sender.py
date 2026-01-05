@@ -1,8 +1,8 @@
 """
 File: core/sender.py
 Location: telegram_scheduler_bot/core/sender.py
-Purpose: High-performance parallel sender (IMPROVEMENT #10)
-Reusable: YES - Copy for any broadcast bot
+Purpose: High-performance parallel sender
+FIXED: PostgreSQL placeholder compatibility
 """
 
 import asyncio
@@ -15,67 +15,92 @@ logger = logging.getLogger(__name__)
 class ParallelSender:
     """
     High-performance parallel sender for multiple channels
-    
-    Features:
-    - Parallel+Hybrid sending strategy
-    - Sends each post to all channels simultaneously
-    - Integrates with rate limiter and retry system
-    - Marks posts as sent immediately (prevents duplicates)
-    - Tracks failed sends for retry
-    - 10-15 seconds for 402 messages (201 posts × 2 channels)
-    
-    IMPROVEMENT #10: Parallel+Hybrid for maximum speed
-    Reusable: YES - Copy for any multi-channel broadcasting
+    FIXED: PostgreSQL compatibility with proper placeholders
     """
     
     def __init__(self, rate_limiter, retry_system):
         self.rate_limiter = rate_limiter
         self.retry_system = retry_system
     
+    def _ph(self, db_manager):
+        """Placeholder helper for PostgreSQL (%s) vs SQLite (?)"""
+        return '%s' if db_manager.is_postgres() else '?'
+    
+    def _get_post_value(self, post, key, default=None):
+        """
+        Safely get value from post (dict or tuple)
+        """
+        if post is None:
+            return default
+        
+        try:
+            if isinstance(post, dict):
+                return post.get(key, default)
+            else:
+                # Map common keys to indices
+                key_map = {
+                    'id': 0,
+                    'message': 1,
+                    'media_type': 2,
+                    'media_file_id': 3,
+                    'caption': 4,
+                    'scheduled_time': 5,
+                    'posted': 6,
+                    'total_channels': 7,
+                    'successful_posts': 8,
+                    'posted_at': 9,
+                    'created_at': 10,
+                    'batch_id': 11,
+                    'paused': 12
+                }
+                idx = key_map.get(key)
+                if idx is not None and len(post) > idx:
+                    return post[idx]
+                return default
+        except Exception as e:
+            logger.error(f"Error getting {key} from post: {e}")
+            return default
+    
     async def send_post_to_channel(self, bot, post, channel_id):
-        """
-        Send a single post to a single channel
-        
-        Args:
-            bot: Telegram bot instance
-            post: Post dict with content
-            channel_id: Target channel ID
-        
-        Returns:
-            bool: True if successful, False if failed
-        """
-        # Check skip list (IMPROVEMENT #7)
+        """Send a single post to a single channel"""
+        # Check skip list
         if self.retry_system.should_skip(channel_id):
             logger.info(f"⏭️ Skipping channel {channel_id} (in skip list)")
             return False
         
-        # Wait for rate limit clearance (IMPROVEMENT #9)
+        # Wait for rate limit clearance
         await self.rate_limiter.acquire(channel_id)
         
         try:
+            # Get values safely
+            media_type = self._get_post_value(post, 'media_type')
+            media_file_id = self._get_post_value(post, 'media_file_id')
+            caption = self._get_post_value(post, 'caption')
+            message = self._get_post_value(post, 'message')
+            
             # Send based on media type
-            if post['media_type'] == 'photo':
+            if media_type == 'photo':
                 await bot.send_photo(
                     chat_id=channel_id,
-                    photo=post['media_file_id'],
-                    caption=post['caption']
+                    photo=media_file_id,
+                    caption=caption
                 )
-            elif post['media_type'] == 'video':
+            elif media_type == 'video':
                 await bot.send_video(
                     chat_id=channel_id,
-                    video=post['media_file_id'],
-                    caption=post['caption']
+                    video=media_file_id,
+                    caption=caption
                 )
-            elif post['media_type'] == 'document':
+            elif media_type == 'document':
                 await bot.send_document(
                     chat_id=channel_id,
-                    document=post['media_file_id'],
-                    caption=post['caption']
+                    document=media_file_id,
+                    caption=caption
                 )
             else:
                 await bot.send_message(
                     chat_id=channel_id,
-                    text=post['message']
+                    text=message
                 )
             
             # Report success
@@ -86,12 +111,13 @@ class ParallelSender:
         except TelegramError as e:
             error_msg = str(e).lower()
             
-            # Check if it's flood control (IMPROVEMENT #9)
+            # Check if it's flood control
             if 'flood' in error_msg or 'too many requests' in error_msg:
                 self.rate_limiter.report_flood_control()
             
-            # Record failure (IMPROVEMENT #7 & #21)
-            self.retry_system.record_failure(channel_id, e, post.get('id'))
+            # Record failure
+            post_id = self._get_post_value(post, 'id')
+            self.retry_system.record_failure(channel_id, e, post_id)
             logger.error(f"❌ Failed channel {channel_id}: {e}")
             return False
     
@@ -99,23 +125,7 @@ class ParallelSender:
                                         emergency_stopped_flag=None):
         """
         PARALLEL+HYBRID STRATEGY for maximum speed
-        
-        Strategy:
-        1. Send each post to ALL channels simultaneously (parallel)
-        2. Mark posts as sent immediately (prevents duplicates on restart)
-        3. Skip failed channels during main send
-        4. Retry ALL failures AFTER batch complete
-        
-        Args:
-            bot: Telegram bot instance
-            posts: List of post dicts to send
-            channel_ids: List of target channel IDs
-            db_manager: Database manager for marking posts
-            emergency_stopped_flag: Callable that returns True if stopped
-        
-        IMPROVEMENT #10: Parallel+Hybrid sending (10-15 sec for 402 msgs)
-        IMPROVEMENT #7: Smart retry (skip failed, retry later)
-        IMPROVEMENT #15: Emergency stop support
+        FIXED: PostgreSQL compatibility with proper placeholders
         """
         if emergency_stopped_flag and emergency_stopped_flag():
             logger.warning("⚠️ Emergency stopped - not sending")
@@ -126,7 +136,10 @@ class ParallelSender:
         
         start_time = asyncio.get_event_loop().time()
         messages_sent = 0
-        failed_sends = []  # Track (post_id, channel_id) for retry
+        failed_sends = []
+        
+        # Get placeholder helper
+        ph = self._ph(db_manager)
         
         # MAIN SEND: Each post to all channels in parallel
         for i, post in enumerate(posts):
@@ -134,7 +147,8 @@ class ParallelSender:
                 logger.warning("⚠️ Emergency stop triggered")
                 break
             
-            logger.info(f"📤 Sending post {i+1}/{len(posts)} (ID: {post['id']})")
+            post_id = self._get_post_value(post, 'id')
+            logger.info(f"📤 Sending post {i+1}/{len(posts)} (ID: {post_id})")
             
             # Create tasks for all channels
             tasks = []
@@ -149,33 +163,33 @@ class ParallelSender:
             # Track failures for retry
             for idx, success in enumerate(results):
                 if not success:
-                    failed_sends.append((post['id'], channel_ids[idx]))
+                    failed_sends.append((post_id, channel_ids[idx]))
             
-            # Mark post as sent IMMEDIATELY (prevents duplicates on restart)
+            # FIXED: Mark post as sent with proper placeholders
             with db_manager.get_db() as conn:
                 c = conn.cursor()
-                c.execute('''
+                c.execute(f'''
                     UPDATE posts 
-                    SET posted = 1, posted_at = ?, successful_posts = ? 
-                    WHERE id = ?
-                ''', (datetime.utcnow().isoformat(), successful, post['id']))
+                    SET posted = 1, posted_at = {ph}, successful_posts = {ph}
+                    WHERE id = {ph}
+                ''', (datetime.utcnow().isoformat(), successful, post_id))
                 conn.commit()
             
             # Log progress
             elapsed = asyncio.get_event_loop().time() - start_time
             rate = messages_sent / elapsed if elapsed > 0 else 0
-            logger.info(f"✅ Post {post['id']}: {successful}/{len(channel_ids)} | Rate: {rate:.1f} msg/s")
+            logger.info(f"✅ Post {post_id}: {successful}/{len(channel_ids)} | Rate: {rate:.1f} msg/s")
         
-        # RETRY PHASE: Retry all failed sends (IMPROVEMENT #7)
+        # RETRY PHASE: Retry all failed sends
+        retry_success = 0
         if failed_sends and not (emergency_stopped_flag and emergency_stopped_flag()):
             logger.info(f"🔄 RETRY PHASE: {len(failed_sends)} failed sends")
-            retry_success = 0
             
             for post_id, channel_id in failed_sends:
                 # Get post data
                 with db_manager.get_db() as conn:
                     c = conn.cursor()
-                    c.execute('SELECT * FROM posts WHERE id = ?', (post_id,))
+                    c.execute(f'SELECT * FROM posts WHERE id = {ph}', (post_id,))
                     post = c.fetchone()
                 
                 if post and await self.send_post_to_channel(bot, post, channel_id):
@@ -183,10 +197,10 @@ class ParallelSender:
             
             logger.info(f"✅ Retry success: {retry_success}/{len(failed_sends)}")
         
-        # ALERT PHASE: Check for channels needing attention (IMPROVEMENT #8)
+        # ALERT PHASE: Check for channels needing attention
         for channel_id in channel_ids:
             if self.retry_system.needs_alert(channel_id):
-                failures = self.retry_system.consecutive_failures[channel_id]
+                failures = self.retry_system.consecutive_failures.get(channel_id, 0)
                 logger.warning(f"⚠️ Channel {channel_id}: {failures} consecutive failures - needs attention!")
         
         # Final summary
