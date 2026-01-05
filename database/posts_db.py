@@ -46,6 +46,25 @@ class PostsDB:
         """Convert list of rows to list of dicts"""
         return [self._row_to_dict(row, columns) for row in rows] if rows else []
     
+    def _ensure_datetime(self, value):
+        """
+        FIXED: Ensure value is a datetime object
+        PostgreSQL returns datetime objects, SQLite returns strings
+        """
+        if value is None:
+            return None
+        
+        if isinstance(value, datetime):
+            return value
+        
+        if isinstance(value, str):
+            try:
+                return datetime.fromisoformat(value)
+            except:
+                return None
+        
+        return None
+    
     def schedule_post(self, scheduled_time_utc, message=None, media_type=None,
                      media_file_id=None, caption=None, batch_id=None, total_channels=0):
         """Schedule a new post"""
