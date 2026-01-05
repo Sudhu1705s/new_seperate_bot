@@ -3,6 +3,7 @@ File: database/channels_db.py
 Location: telegram_scheduler_bot/database/channels_db.py
 Purpose: All channel database operations
 Reusable: Modify for any multi-channel bot
+FIXED: PostgreSQL compatibility
 """
 
 from datetime import datetime
@@ -23,22 +24,27 @@ class ChannelsDB:
         self.channel_number_map = {}
         self.update_channel_numbers()
     
+    def _ph(self):
+        """Get correct placeholder for current database"""
+        return '%s' if self.db.is_postgres() else '?'
+    
     def add_channel(self, channel_id, channel_name=None):
         """Add a new channel"""
+        ph = self._ph()
         with self.db.get_db() as conn:
             c = conn.cursor()
             try:
-                c.execute('''
+                c.execute(f'''
                     INSERT INTO channels (channel_id, channel_name, active) 
-                    VALUES (?, ?, 1)
-                ''', (channel_id, channel_name))
+                    VALUES ({ph}, {ph}, {ph})
+                ''', (channel_id, channel_name, 1))
                 conn.commit()
                 self.update_channel_numbers()
                 logger.info(f"✅ Added channel: {channel_id}")
                 return True
             except:
                 # Channel exists, just activate it
-                c.execute('UPDATE channels SET active = 1 WHERE channel_id = ?', (channel_id,))
+                c.execute(f'UPDATE channels SET active = {ph} WHERE channel_id = {ph}', (1, channel_id))
                 conn.commit()
                 self.update_channel_numbers()
                 return True
@@ -77,9 +83,10 @@ class ChannelsDB:
     
     def remove_channel(self, channel_id):
         """Remove a channel (hard delete - IMPROVEMENT #4)"""
+        ph = self._ph()
         with self.db.get_db() as conn:
             c = conn.cursor()
-            c.execute('DELETE FROM channels WHERE channel_id = ?', (channel_id,))
+            c.execute(f'DELETE FROM channels WHERE channel_id = {ph}', (channel_id,))
             deleted = c.rowcount > 0
             conn.commit()
             if deleted:
@@ -127,25 +134,26 @@ class ChannelsDB:
         Returns:
             bool: True if successful
         """
+        ph = self._ph()
         with self.db.get_db() as conn:
             c = conn.cursor()
             
             # Get channel info
-            c.execute('SELECT * FROM channels WHERE channel_id = ?', (channel_id,))
+            c.execute(f'SELECT * FROM channels WHERE channel_id = {ph}', (channel_id,))
             channel = c.fetchone()
             
             if not channel:
                 return False
             
             # Move to recycle bin
-            c.execute('''
+            c.execute(f'''
                 INSERT INTO recycle_bin (channel_id, channel_name, failure_count, last_failure)
-                VALUES (?, ?, ?, ?)
+                VALUES ({ph}, {ph}, {ph}, {ph})
             ''', (channel['channel_id'], channel.get('channel_name'), 
                   channel.get('failure_count', 0), channel.get('last_failure')))
             
             # Delete from channels
-            c.execute('DELETE FROM channels WHERE channel_id = ?', (channel_id,))
+            c.execute(f'DELETE FROM channels WHERE channel_id = {ph}', (channel_id,))
             conn.commit()
             self.update_channel_numbers()
             
@@ -162,24 +170,25 @@ class ChannelsDB:
         Returns:
             bool: True if successful
         """
+        ph = self._ph()
         with self.db.get_db() as conn:
             c = conn.cursor()
             
             # Get from recycle bin
-            c.execute('SELECT * FROM recycle_bin WHERE channel_id = ?', (channel_id,))
+            c.execute(f'SELECT * FROM recycle_bin WHERE channel_id = {ph}', (channel_id,))
             channel = c.fetchone()
             
             if not channel:
                 return False
             
             # Restore to channels
-            c.execute('''
+            c.execute(f'''
                 INSERT INTO channels (channel_id, channel_name, active, failure_count)
-                VALUES (?, ?, 1, 0)
-            ''', (channel['channel_id'], channel.get('channel_name')))
+                VALUES ({ph}, {ph}, {ph}, {ph})
+            ''', (channel['channel_id'], channel.get('channel_name'), 1, 0))
             
             # Remove from recycle bin
-            c.execute('DELETE FROM recycle_bin WHERE channel_id = ?', (channel_id,))
+            c.execute(f'DELETE FROM recycle_bin WHERE channel_id = {ph}', (channel_id,))
             conn.commit()
             self.update_channel_numbers()
             
@@ -229,17 +238,19 @@ class ChannelsDB:
     
     def get_active_channels(self):
         """Get only active channels"""
+        ph = self._ph()
         with self.db.get_db() as conn:
             c = conn.cursor()
-            c.execute('SELECT channel_id FROM channels WHERE active = 1 ORDER BY added_at')
+            c.execute(f'SELECT channel_id FROM channels WHERE active = {ph} ORDER BY added_at', (1,))
             return [row[0] for row in c.fetchall()]
     
     def update_channel_numbers(self):
         """Create mapping: channel number -> channel ID (IMPROVEMENT #4)"""
         self.channel_number_map = {}
+        ph = self._ph()
         with self.db.get_db() as conn:
             c = conn.cursor()
-            c.execute('SELECT channel_id FROM channels WHERE active = 1 ORDER BY added_at')
+            c.execute(f'SELECT channel_id FROM channels WHERE active = {ph} ORDER BY added_at', (1,))
             for idx, row in enumerate(c.fetchall(), 1):
                 self.channel_number_map[idx] = row[0]
     
@@ -256,21 +267,22 @@ class ChannelsDB:
         Record a channel failure (IMPROVEMENT #6 & #8)
         Checks if threshold reached (3 failures)
         """
+        ph = self._ph()
         with self.db.get_db() as conn:
             c = conn.cursor()
-            c.execute('''
+            c.execute(f'''
                 INSERT INTO channel_failures (channel_id, post_id, error_type, error_message)
-                VALUES (?, ?, ?, ?)
+                VALUES ({ph}, {ph}, {ph}, {ph})
             ''', (channel_id, post_id, error_type, error_message))
             
-            c.execute('''
+            c.execute(f'''
                 UPDATE channels 
-                SET failure_count = failure_count + 1, last_failure = ? 
-                WHERE channel_id = ?
+                SET failure_count = failure_count + 1, last_failure = {ph}
+                WHERE channel_id = {ph}
             ''', (datetime.utcnow().isoformat(), channel_id))
             
             # Check if threshold reached
-            c.execute('SELECT failure_count FROM channels WHERE channel_id = ?', (channel_id,))
+            c.execute(f'SELECT failure_count FROM channels WHERE channel_id = {ph}', (channel_id,))
             result = c.fetchone()
             failure_count = result[0] if result else 0
             
@@ -281,50 +293,55 @@ class ChannelsDB:
     
     def record_channel_success(self, channel_id):
         """Record a successful send to channel"""
+        ph = self._ph()
         with self.db.get_db() as conn:
             c = conn.cursor()
-            c.execute('''
+            c.execute(f'''
                 UPDATE channels 
-                SET failure_count = 0, last_success = ? 
-                WHERE channel_id = ?
-            ''', (datetime.utcnow().isoformat(), channel_id))
+                SET failure_count = {ph}, last_success = {ph}
+                WHERE channel_id = {ph}
+            ''', (0, datetime.utcnow().isoformat(), channel_id))
             conn.commit()
     
     def get_channel_failures(self, channel_id, limit=10):
         """Get recent failures for a channel"""
+        ph = self._ph()
         with self.db.get_db() as conn:
             c = conn.cursor()
-            c.execute('''
+            c.execute(f'''
                 SELECT * FROM channel_failures 
-                WHERE channel_id = ? 
+                WHERE channel_id = {ph}
                 ORDER BY failed_at DESC 
-                LIMIT ?
+                LIMIT {ph}
             ''', (channel_id, limit))
             return c.fetchall()
     
     def get_channels_with_failures(self):
         """Get channels that have failure counts > 0"""
+        ph = self._ph()
         with self.db.get_db() as conn:
             c = conn.cursor()
-            c.execute('''
+            c.execute(f'''
                 SELECT channel_id, channel_name, failure_count, last_failure, in_skip_list 
                 FROM channels 
-                WHERE failure_count > 0 
+                WHERE failure_count > {ph}
                 ORDER BY failure_count DESC
-            ''')
+            ''', (0,))
             return c.fetchall()
     
     def mark_channel_in_skip_list(self, channel_id, in_skip_list=True):
         """Mark channel as in skip list (IMPROVEMENT #7)"""
+        ph = self._ph()
         with self.db.get_db() as conn:
             c = conn.cursor()
-            c.execute('UPDATE channels SET in_skip_list = ? WHERE channel_id = ?',
+            c.execute(f'UPDATE channels SET in_skip_list = {ph} WHERE channel_id = {ph}',
                      (1 if in_skip_list else 0, channel_id))
             conn.commit()
     
     def get_skip_list_channels(self):
         """Get all channels in skip list"""
+        ph = self._ph()
         with self.db.get_db() as conn:
             c = conn.cursor()
-            c.execute('SELECT channel_id, channel_name FROM channels WHERE in_skip_list = 1')
+            c.execute(f'SELECT channel_id, channel_name FROM channels WHERE in_skip_list = {ph}', (1,))
             return c.fetchall()
