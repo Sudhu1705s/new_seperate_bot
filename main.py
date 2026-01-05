@@ -39,6 +39,7 @@ from core.sender import ParallelSender
 from core.scheduler_core import SchedulerCore
 from handlers.command_handlers import register_command_handlers
 from handlers.message_handlers import register_message_handlers
+from handlers.callback_handlers import register_callback_handlers
 
 async def post_init(application):
     """Initialize background tasks after bot starts"""
@@ -99,6 +100,7 @@ def main():
     # Register handlers
     register_command_handlers(app, scheduler)
     register_message_handlers(app, scheduler)
+    register_callback_handlers(app, scheduler)  # NEW: Handle button clicks
     
     logger.info("="*60)
     logger.info("✅ TELEGRAM SCHEDULER v2.0 STARTED")
