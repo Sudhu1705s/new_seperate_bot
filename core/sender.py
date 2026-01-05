@@ -2,12 +2,13 @@
 File: core/sender.py
 Location: telegram_scheduler_bot/core/sender.py
 Purpose: High-performance parallel sender
-FIXED: PostgreSQL placeholder compatibility
+FIXED: PostgreSQL compatibility + Interactive failure notifications
 """
 
 import asyncio
 from datetime import datetime
 from telegram.error import TelegramError
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 import logging
 
 logger = logging.getLogger(__name__)
@@ -15,7 +16,7 @@ logger = logging.getLogger(__name__)
 class ParallelSender:
     """
     High-performance parallel sender for multiple channels
-    FIXED: PostgreSQL compatibility with proper placeholders
+    FIXED: Interactive notifications for failed channels
     """
     
     def __init__(self, rate_limiter, retry_system):
@@ -27,37 +28,62 @@ class ParallelSender:
         """Placeholder helper for PostgreSQL (%s) vs SQLite (?)"""
         return '%s' if db_manager.is_postgres() else '?'
     
-    async def _notify_admin_about_failures(self, bot, alert_channels):
+    async def _notify_admin_with_actions(self, bot, channel_id, error_message, failure_count):
         """
-        Send notification to admin about unreachable channels
-        Only sends once per channel until it's fixed
+        Send interactive notification to admin about unreachable channel
+        Gives admin options to handle the situation
         """
         from config.settings import ADMIN_ID
         
-        # Filter out channels we've already notified about
-        new_alerts = []
-        for channel_id, failures in alert_channels:
-            if channel_id not in self.admin_notified or self.admin_notified[channel_id] < failures:
-                new_alerts.append((channel_id, failures))
-                self.admin_notified[channel_id] = failures
-        
-        if not new_alerts:
-            return
-        
         # Build notification message
-        message = "🚨 <b>CHANNEL ALERT</b>\n\n"
-        message += f"⚠️ <b>{len(new_alerts)} channel(s) unreachable:</b>\n\n"
+        message = f"🚨 <b>CHANNEL UNREACHABLE</b>\n\n"
+        message += f"Channel: <code>{channel_id}</code>\n"
+        message += f"Failures: <b>{failure_count}</b>\n"
+        message += f"Error: <code>{error_message[:150]}</code>\n\n"
         
-        for channel_id, failures in new_alerts:
-            message += f"❌ <code>{channel_id}</code>\n"
-            message += f"   └ {failures} consecutive failures\n\n"
+        if failure_count >= 3:
+            message += "⚠️ <b>Channel added to skip list!</b>\n"
+            message += "Posts will NOT be sent to this channel.\n\n"
         
-        message += "💡 <b>What to do:</b>\n"
-        message += "• Check if bot is still admin in these channels\n"
-        message += "• Verify channel IDs are correct\n"
-        message += "• Use /channelhealth for details\n"
-        message += "• Use /test [number] to test specific channel\n\n"
-        message += "⏭️ These channels are now in <b>skip list</b>"
+        message += "❓ <b>What do you want to do?</b>"
+        
+        # Create action buttons
+        keyboard = [
+            [
+                InlineKeyboardButton("🧪 Test Channel", callback_data=f"test_channel:{channel_id}"),
+                InlineKeyboardButton("🔄 Retry Now", callback_data=f"retry_channel:{channel_id}")
+            ],
+            [
+                InlineKeyboardButton("🗑️ Delete Channel", callback_data=f"delete_channel:{channel_id}"),
+                InlineKeyboardButton("✅ Keep & Resume", callback_data=f"resume_channel:{channel_id}")
+            ],
+            [
+                InlineKeyboardButton("📋 View All Failures", callback_data=f"failures:{channel_id}"),
+                InlineKeyboardButton("❌ Ignore", callback_data="ignore")
+            ]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        try:
+            await bot.send_message(
+                chat_id=ADMIN_ID,
+                text=message,
+                parse_mode='HTML',
+                reply_markup=reply_markup
+            )
+            logger.info(f"✅ Admin notified about failed channel {channel_id}")
+        except Exception as e:
+            logger.error(f"Failed to notify admin: {e}")
+    
+    async def _notify_first_failure(self, bot, channel_id, error_message):
+        """Notify admin immediately when a channel first fails"""
+        from config.settings import ADMIN_ID
+        
+        message = f"⚠️ <b>Channel Failed (First Time)</b>\n\n"
+        message += f"Channel: <code>{channel_id}</code>\n"
+        message += f"Error: <code>{error_message[:100]}</code>\n\n"
+        message += f"💡 Will retry automatically...\n"
+        message += f"If this persists, you'll get action options."
         
         try:
             await bot.send_message(
@@ -65,14 +91,11 @@ class ParallelSender:
                 text=message,
                 parse_mode='HTML'
             )
-            logger.info(f"✅ Admin notified about {len(new_alerts)} failed channels")
         except Exception as e:
-            logger.error(f"Failed to notify admin: {e}")
+            logger.error(f"Failed to notify admin about first failure: {e}")
     
     def _get_post_value(self, post, key, default=None):
-        """
-        Safely get value from post (dict or tuple)
-        """
+        """Safely get value from post (dict or tuple)"""
         if post is None:
             return default
         
@@ -82,19 +105,10 @@ class ParallelSender:
             else:
                 # Map common keys to indices
                 key_map = {
-                    'id': 0,
-                    'message': 1,
-                    'media_type': 2,
-                    'media_file_id': 3,
-                    'caption': 4,
-                    'scheduled_time': 5,
-                    'posted': 6,
-                    'total_channels': 7,
-                    'successful_posts': 8,
-                    'posted_at': 9,
-                    'created_at': 10,
-                    'batch_id': 11,
-                    'paused': 12
+                    'id': 0, 'message': 1, 'media_type': 2, 'media_file_id': 3,
+                    'caption': 4, 'scheduled_time': 5, 'posted': 6,
+                    'total_channels': 7, 'successful_posts': 8, 'posted_at': 9,
+                    'created_at': 10, 'batch_id': 11, 'paused': 12
                 }
                 idx = key_map.get(key)
                 if idx is not None and len(post) > idx:
@@ -149,6 +163,11 @@ class ParallelSender:
             # Report success
             self.rate_limiter.report_success()
             self.retry_system.record_success(channel_id)
+            
+            # Clear notification flag if channel was previously failing
+            if channel_id in self.admin_notified:
+                del self.admin_notified[channel_id]
+            
             return True
             
         except TelegramError as e:
@@ -162,37 +181,21 @@ class ParallelSender:
             post_id = self._get_post_value(post, 'id')
             self.retry_system.record_failure(channel_id, e, post_id)
             
-            # Notify admin immediately on first failure
-            if self.retry_system.consecutive_failures.get(channel_id, 0) == 1:
+            failure_count = self.retry_system.consecutive_failures.get(channel_id, 0)
+            
+            # Notify admin with actions on first failure OR when reaching threshold
+            if failure_count == 1:
                 asyncio.create_task(self._notify_first_failure(bot, channel_id, str(e)))
+            elif failure_count >= 3 and channel_id not in self.admin_notified:
+                asyncio.create_task(self._notify_admin_with_actions(bot, channel_id, str(e), failure_count))
+                self.admin_notified[channel_id] = failure_count
             
             logger.error(f"❌ Failed channel {channel_id}: {e}")
             return False
     
-    async def _notify_first_failure(self, bot, channel_id, error_message):
-        """Notify admin immediately when a channel first fails"""
-        from config.settings import ADMIN_ID
-        
-        message = f"⚠️ <b>Channel Failed</b>\n\n"
-        message += f"Channel: <code>{channel_id}</code>\n"
-        message += f"Error: <code>{error_message[:100]}</code>\n\n"
-        message += f"💡 Will retry automatically"
-        
-        try:
-            await bot.send_message(
-                chat_id=ADMIN_ID,
-                text=message,
-                parse_mode='HTML'
-            )
-        except Exception as e:
-            logger.error(f"Failed to notify admin about first failure: {e}")
-    
     async def send_batch_to_all_channels(self, bot, posts, channel_ids, db_manager, 
                                         emergency_stopped_flag=None):
-        """
-        PARALLEL+HYBRID STRATEGY for maximum speed
-        FIXED: PostgreSQL compatibility with proper placeholders
-        """
+        """PARALLEL+HYBRID STRATEGY for maximum speed"""
         if emergency_stopped_flag and emergency_stopped_flag():
             logger.warning("⚠️ Emergency stopped - not sending")
             return
@@ -231,7 +234,7 @@ class ParallelSender:
                 if not success:
                     failed_sends.append((post_id, channel_ids[idx]))
             
-            # FIXED: Mark post as sent with proper placeholders
+            # Mark post as sent with proper placeholders
             with db_manager.get_db() as conn:
                 c = conn.cursor()
                 c.execute(f'''
@@ -262,18 +265,6 @@ class ParallelSender:
                     retry_success += 1
             
             logger.info(f"✅ Retry success: {retry_success}/{len(failed_sends)}")
-        
-        # ALERT PHASE: Check for channels needing attention AND NOTIFY USER
-        alert_channels = []
-        for channel_id in channel_ids:
-            if self.retry_system.needs_alert(channel_id):
-                failures = self.retry_system.consecutive_failures.get(channel_id, 0)
-                alert_channels.append((channel_id, failures))
-                logger.warning(f"⚠️ Channel {channel_id}: {failures} consecutive failures - needs attention!")
-        
-        # SEND NOTIFICATION TO ADMIN
-        if alert_channels:
-            await self._notify_admin_about_failures(bot, alert_channels)
         
         # Final summary
         total_time = asyncio.get_event_loop().time() - start_time
