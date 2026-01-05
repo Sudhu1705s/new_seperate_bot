@@ -28,19 +28,35 @@ class PostsDB:
         """
         Convert database row to dictionary
         Works with both SQLite (dict-like) and PostgreSQL (tuple)
+        FIXED: Automatically converts datetime columns
         """
         if row is None:
             return None
         
-        # If already dict-like, return as-is
+        # If already dict-like, convert to regular dict
         if hasattr(row, 'keys'):
-            return dict(row)
-        
+            result = dict(row)
         # Convert tuple to dict
-        if isinstance(row, tuple):
-            return {columns[i]: row[i] for i in range(min(len(columns), len(row)))}
+        elif isinstance(row, tuple):
+            result = {columns[i]: row[i] for i in range(min(len(columns), len(row)))}
+        else:
+            result = row
         
-        return row
+        # CRITICAL FIX: Ensure datetime fields are datetime objects, not strings
+        datetime_fields = ['scheduled_time', 'posted_at', 'created_at', 'last_success', 'last_failure', 'deleted_at', 'added_at', 'failed_at', 'next_scheduled', 'last_posted']
+        
+        for field in datetime_fields:
+            if field in result and result[field] is not None:
+                value = result[field]
+                # If it's a string, convert to datetime
+                if isinstance(value, str):
+                    try:
+                        result[field] = datetime.fromisoformat(value)
+                    except:
+                        pass  # Keep as string if conversion fails
+                # If already datetime, leave as-is
+        
+        return result
     
     def _rows_to_dicts(self, rows, columns):
         """Convert list of rows to list of dicts"""
