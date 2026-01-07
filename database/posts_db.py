@@ -310,7 +310,7 @@ class PostsDB:
             if not result:
                 return None
             
-            scheduled_value = result[0]
+            sscheduled_value = result['scheduled_time']
             
             # If already datetime, return it
             if isinstance(scheduled_value, datetime):
@@ -383,3 +383,4 @@ class PostsDB:
                       'posted_at', 'created_at', 'batch_id', 'paused']
             
             return self._rows_to_dicts(rows, columns)
+
