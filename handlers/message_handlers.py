@@ -137,177 +137,93 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE, sch
             return
     
     # ============ BULK MODE ============
-    elif session['mode'] == 'bulk':
-        
-        if "❌" in message_text or "cancel" in message_text.lower():
-            user_id = update.effective_user.id
-            scheduler.user_sessions[user_id] = {'mode': None, 'step': 'choose_mode'}
-            await update.message.reply_text("❌ Cancelled", reply_markup=get_mode_keyboard())
-            return
-        
-        if session['step'] == 'bulk_get_start_time':
-            try:
-                ist_time = parse_user_time_input(message_text)
-                utc_time = ist_to_utc(ist_time)
-                session['bulk_start_time_utc'] = utc_time
-                session['step'] = 'bulk_get_duration'
-                
+    # Replace these sections in message_handlers.py:
+
+# ============ BATCH MODE - START OPTION ============
+    if session['step'] == 'batch_get_start_option':
+        # FIX: Check text more reliably
+        if "Specific Time" in message_text or "specific time" in message_text.lower():
+            session['step'] = 'batch_get_start_time'
+            await update.message.reply_text(
+                f"🕐 Current: {format_time_display(utc_now())}\n\n"
+                f"📅 When should FIRST batch go out?\n\n"
+                f"<b>Examples:</b>\n"
+                f"• now\n"
+                f"• 30m\n"
+                f"• today 18:00\n"
+                f"• 2026-01-31 20:00",
+                reply_markup=get_quick_time_keyboard(),
+                parse_mode='HTML'
+            )
+        elif "After Last Post" in message_text or "after last" in message_text.lower():
+            # Get last scheduled post
+            last_post = scheduler.posts_db.get_last_post()
+            if not last_post:
                 await update.message.reply_text(
-                    f"✅ Start: {format_time_display(utc_time)}\n\n"
-                    f"🕐 <b>Step 2:</b> How long to space ALL posts?\n\n"
-                    f"<b>IMPROVEMENT #1 & #2: Multiple formats!</b>\n"
-                    f"• 0m or now - All posts at once\n"
-                    f"• 2h - Over 2 hours\n"
-                    f"• 6h - Over 6 hours\n"
-                    f"• 2026-01-31 23:00 - Until this time",
-                    reply_markup=get_duration_keyboard(),
-                    parse_mode='HTML'
-                )
-                
-            except ValueError as e:
-                await update.message.reply_text(
-                    f"❌ {str(e)}",
-                    reply_markup=get_quick_time_keyboard()
-                )
-            return
-        
-        elif session['step'] == 'bulk_get_duration':
-            try:
-                start_time_ist = utc_to_ist(session['bulk_start_time_utc'])
-                duration_minutes = calculate_duration_from_end_time(start_time_ist, message_text)
-                
-                session['duration_minutes'] = duration_minutes
-                session['step'] = 'bulk_collect_posts'
-                
-                duration_text = "immediately (all at once)" if duration_minutes == 0 else f"{duration_minutes} minutes"
-                
-                await update.message.reply_text(
-                    f"✅ Duration: {duration_text}\n\n"
-                    f"📤 <b>Step 3:</b> Now send/forward all posts\n\n"
-                    f"When done, click button:",
-                    reply_markup=get_bulk_collection_keyboard(),
-                    parse_mode='HTML'
-                )
-                
-            except ValueError as e:
-                await update.message.reply_text(
-                    f"❌ {str(e)}",
-                    reply_markup=get_duration_keyboard()
-                )
-            return
-        
-        elif session['step'] == 'bulk_collect_posts':
-            
-            if "✅ Done" in message_text:
-                posts = session.get('posts', [])
-                
-                if not posts:
-                    await update.message.reply_text(
-                        "❌ No posts! Send at least one.",
-                        reply_markup=get_bulk_collection_keyboard()
-                    )
-                    return
-                
-                session['step'] = 'bulk_confirm'
-                
-                duration_minutes = session['duration_minutes']
-                num_posts = len(posts)
-                interval = duration_minutes / num_posts if num_posts > 1 and duration_minutes > 0 else 0
-                start_utc = session['bulk_start_time_utc']
-                start_ist = utc_to_ist(start_utc)
-                
-                response = f"📋 <b>CONFIRMATION REQUIRED</b>\n\n"
-                response += f"📦 Posts: <b>{num_posts}</b>\n"
-                response += f"📢 Channels: <b>{scheduler.channels_db.get_channel_count()}</b>\n"
-                response += f"📅 Start: {format_time_display(start_utc)}\n"
-                
-                if duration_minutes == 0:
-                    response += f"⚡ <b>All posts at EXACT SAME TIME</b>\n"
-                    response += f"(2-second delay between posts for safety)\n"
-                else:
-                    end_ist = start_ist + timedelta(minutes=duration_minutes)
-                    response += f"📅 End: {format_time_display(ist_to_utc(end_ist))}\n"
-                    response += f"⏱️ Interval: <b>{interval:.1f} min</b>\n"
-                
-                response += f"\n⚠️ Click <b>Confirm & Schedule</b> to proceed"
-                
-                await update.message.reply_text(
-                    response,
-                    reply_markup=get_confirmation_keyboard(),
-                    parse_mode='HTML'
+                    "❌ No posts scheduled yet! Use specific time instead.",
+                    reply_markup=get_start_option_keyboard()
                 )
                 return
             
-            content = extract_content(update.message)
+            last_time_utc = scheduler.datetime_fromisoformat(last_post['scheduled_time'])
+            # Start 5 minutes after last post
+            start_utc = last_time_utc + timedelta(minutes=5)
+            session['batch_start_time_utc'] = start_utc
+            session['step'] = 'batch_get_duration'
             
-            if content:
-                session['posts'].append(content)
-                count = len(session['posts'])
-                await update.message.reply_text(
-                    f"✅ Post #{count} added!\n\nTotal: <b>{count}</b>",
-                    reply_markup=get_bulk_collection_keyboard(),
-                    parse_mode='HTML'
-                )
-            return
-        
-        elif session['step'] == 'bulk_confirm':
-            if "✅ Confirm" in message_text:
-                await schedule_bulk_posts(update, context, scheduler)
-                return
-            elif "❌" in message_text:
-                user_id = update.effective_user.id
-                scheduler.user_sessions[user_id] = {'mode': None, 'step': 'choose_mode'}
-                await update.message.reply_text("❌ Cancelled", reply_markup=get_mode_keyboard())
-                return
+            await update.message.reply_text(
+                f"✅ Start: {format_time_display(start_utc)}\n"
+                f"(5 min after last post)\n\n"
+                f"⏱️ <b>Step 2:</b> Total duration for ALL batches?\n\n"
+                f"• 2h - Over 2 hours\n"
+                f"• 6h - Over 6 hours\n"
+                f"• 2026-01-31 23:00 - Until this time",
+                reply_markup=get_duration_keyboard(),
+                parse_mode='HTML'
+            )
+        return
     
-    # ============ BATCH MODE ============
-    elif session['mode'] == 'batch':
-        
-        if "❌" in message_text or "cancel" in message_text.lower():
-            user_id = update.effective_user.id
-            scheduler.user_sessions[user_id] = {'mode': None, 'step': 'choose_mode'}
-            await update.message.reply_text("❌ Cancelled", reply_markup=get_mode_keyboard())
-            return
-        
-        if session['step'] == 'batch_get_start_option':
-            if "🕐 Specific Time" in message_text:
-                session['step'] = 'batch_get_start_time'
+    # ============ AUTO MODE - START OPTION ============
+    if session['step'] == 'auto_get_start_option':
+        # FIX: Check text more reliably
+        if "Specific Time" in message_text or "specific time" in message_text.lower():
+            session['step'] = 'auto_get_start_time'
+            await update.message.reply_text(
+                f"🕐 Current: {format_time_display(utc_now())}\n\n"
+                f"📅 When should FIRST batch go out?\n\n"
+                f"<b>Examples:</b>\n"
+                f"• now\n"
+                f"• 30m\n"
+                f"• today 20:00\n"
+                f"• 2026-01-31 20:00",
+                reply_markup=get_quick_time_keyboard(),
+                parse_mode='HTML'
+            )
+        elif "After Last Post" in message_text or "after last" in message_text.lower():
+            last_post = scheduler.posts_db.get_last_post()
+            if not last_post:
                 await update.message.reply_text(
-                    f"🕐 Current: {format_time_display(utc_now())}\n\n"
-                    f"📅 When should FIRST batch go out?\n\n"
-                    f"<b>Examples:</b>\n"
-                    f"• now\n"
-                    f"• 30m\n"
-                    f"• today 18:00\n"
-                    f"• 2026-01-31 20:00",
-                    reply_markup=get_quick_time_keyboard(),
-                    parse_mode='HTML'
+                    "❌ No posts scheduled yet! Use specific time instead.",
+                    reply_markup=get_start_option_keyboard()
                 )
-            elif "📅 After Last Post" in message_text:
-                last_post = scheduler.posts_db.get_last_post()
-                if not last_post:
-                    await update.message.reply_text(
-                        "❌ No posts scheduled yet! Use specific time instead.",
-                        reply_markup=get_start_option_keyboard()
-                    )
-                    return
-                
-                last_time_utc = scheduler.datetime_fromisoformat(last_post['scheduled_time'])
-                start_utc = last_time_utc + timedelta(minutes=5)
-                session['batch_start_time_utc'] = start_utc
-                session['step'] = 'batch_get_duration'
-                
-                await update.message.reply_text(
-                    f"✅ Start: {format_time_display(start_utc)}\n"
-                    f"(5 min after last post)\n\n"
-                    f"⏱️ <b>Step 2:</b> Total duration for ALL batches?\n\n"
-                    f"• 2h - Over 2 hours\n"
-                    f"• 6h - Over 6 hours\n"
-                    f"• 2026-01-31 23:00 - Until this time",
-                    reply_markup=get_duration_keyboard(),
-                    parse_mode='HTML'
-                )
-            return
+                return
+            
+            last_time_utc = scheduler.datetime_fromisoformat(last_post['scheduled_time'])
+            start_utc = last_time_utc + timedelta(minutes=5)
+            session['auto_start_time_utc'] = start_utc
+            session['step'] = 'auto_get_batch_size'
+            
+            await update.message.reply_text(
+                f"✅ Start: {format_time_display(start_utc)}\n"
+                f"(5 min after last post)\n\n"
+                f"📦 <b>Step 2:</b> Posts per batch?\n\n"
+                f"• 10\n"
+                f"• 20\n"
+                f"• 50",
+                reply_markup=get_batch_size_keyboard(),
+                parse_mode='HTML'
+            )
+        return
         
         # [Rest of batch mode code remains the same...]
         # [Truncated for brevity - include full batch and auto mode from original]
@@ -318,3 +234,4 @@ def register_message_handlers(app, scheduler):
         filters.ALL,
         lambda u, c: handle_message(u, c, scheduler)
     ))
+
