@@ -245,7 +245,7 @@ class ChannelsDB:
             c = conn.cursor()
             c.execute('SELECT channel_id FROM channels WHERE active = 1 ORDER BY added_at')
             rows = c.fetchall()
-            return [row[0] for row in rows] if rows else []
+            return [row['channel_id'] for row in c.fetchall()]
     
     def update_channel_numbers(self):
         """
@@ -377,3 +377,4 @@ class ChannelsDB:
             c = conn.cursor()
             c.execute('SELECT channel_id, channel_name FROM channels WHERE in_skip_list = 1')
             return c.fetchall()
+
