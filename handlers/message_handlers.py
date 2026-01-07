@@ -630,7 +630,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE, sch
             
             content = extract_content(update.message)
             if content:
-                session['posts'].appen
+                session['posts'].append
                 content = extract_content(update.message)
             if content:
                 session['posts'].append(content)
@@ -654,3 +654,4 @@ def register_message_handlers(app, scheduler):
         filters.ALL,
         lambda u, c: handle_message(u, c, scheduler)
     ))
+
