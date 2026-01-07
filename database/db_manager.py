@@ -41,6 +41,7 @@ class DatabaseManager:
                 self.db_url,
                 connect_timeout=10,
                 sslmode='require'
+                cursor_factory=psycopg2.extras.RealDictCursor  # Line 54
             )
             conn.autocommit = False
             try:
@@ -266,3 +267,4 @@ class DatabaseManager:
                 size_bytes = c.fetchone()[0]
             
             return size_bytes / 1024 / 1024  # Convert to MB
+
