@@ -100,7 +100,30 @@ async def channels_command(update: Update, context: ContextTypes.DEFAULT_TYPE, s
     response += "• /test 5\n"
     
     await update.message.reply_text(response, reply_markup=get_mode_keyboard(), parse_mode='HTML')
-
+async def clearskip_command(update: Update, context: ContextTypes.DEFAULT_TYPE, scheduler):
+    """Clear skip list - remove all channels from temporary skip"""
+    if update.effective_user.id != ADMIN_ID:
+        return
+    
+    # Get skip list before clearing
+    skip_list = list(scheduler.retry_system.skip_list.keys())
+    
+    # Clear skip list
+    scheduler.retry_system.clear_skip_list()
+    
+    # Also reset consecutive failures
+    for channel_id in skip_list:
+        scheduler.retry_system.consecutive_failures[channel_id] = 0
+    
+    await update.message.reply_text(
+        f"✅ <b>Skip List Cleared!</b>\n\n"
+        f"Removed {len(skip_list)} channels from skip list:\n"
+        f"{chr(10).join([f'• <code>{ch}</code>' for ch in skip_list[:5]])}\n"
+        f"\n🔄 All channels will be retried on next post.",
+        reply_markup=get_mode_keyboard(),
+        parse_mode='HTML'
+    )
+    
 async def add_channel_command(update: Update, context: ContextTypes.DEFAULT_TYPE, scheduler):
     """Add channel command with multi-command support (IMPROVEMENT #3)"""
     if update.effective_user.id != ADMIN_ID:
@@ -738,4 +761,5 @@ def register_command_handlers(app, scheduler):
     app.add_handler(CommandHandler("listrecurring", lambda u, c: listrecurring_command(u, c, scheduler)))
     app.add_handler(CommandHandler("pauserecurring", lambda u, c: pauserecurring_command(u, c, scheduler)))
     app.add_handler(CommandHandler("resumerecurring", lambda u, c: resumerecurring_command(u, c, scheduler)))
+    app.add_handler(CommandHandler("clearskip", lambda u, c: clearskip_command(u, c, scheduler)))
     app.add_handler(CommandHandler("deleterecurring", lambda u, c: deleterecurring_command(u, c, scheduler)))
