@@ -24,7 +24,7 @@ class SmartRetrySystem:
     NEW: Time-based skip instead of permanent skip
     """
     
-    def __init__(self, max_retries=3, alert_threshold=5, skip_duration_minutes=5):
+    def __init__(self, max_retries=5, alert_threshold=5, skip_duration_minutes=5):
         self.max_retries = max_retries
         self.alert_threshold = alert_threshold
         self.skip_duration_minutes = skip_duration_minutes
@@ -180,6 +180,7 @@ class SmartRetrySystem:
         if channel_id in self.skip_list:
             del self.skip_list[channel_id]
             logger.info(f"🔄 Channel {channel_id} removed from skip list")
+
 
 
 
