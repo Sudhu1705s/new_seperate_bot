@@ -2,7 +2,7 @@
 File: main.py
 Location: telegram_scheduler_bot/main.py
 Purpose: Main entry point for the bot
-UPDATED: Uses new AggressiveRateLimiter and HyperParallelSender
+BALANCED VERSION: Fast but safe
 """
 
 import os
@@ -28,14 +28,14 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# UPDATED: Import new classes
+# BALANCED: Import balanced classes
 from config.settings import BOT_TOKEN, ADMIN_ID, INITIAL_CHANNEL_IDS
 from database.db_manager import DatabaseManager
 from database.posts_db import PostsDB
 from database.channels_db import ChannelsDB
-from core.rate_limiter import AggressiveRateLimiter  # CHANGED!
+from core.rate_limiter import BalancedRateLimiter  # CHANGED to Balanced!
 from core.retry_system import SmartRetrySystem
-from core.sender import ParallelSender  # CHANGED!
+from core.sender import HyperParallelSender
 from core.scheduler_core import SchedulerCore
 from handlers.command_handlers import register_command_handlers, stats_command, channels_command, list_posts
 from handlers.message_handlers import register_message_handlers
@@ -48,15 +48,11 @@ async def post_init(application):
     # Start main background poster
     asyncio.create_task(scheduler.background_poster(application.bot))
     logger.info("✅ Background poster started")
-    
-    # REMOVED: Recurring posts checker (not yet implemented)
-    # asyncio.create_task(scheduler.recurring_system.check_and_schedule_recurring(application.bot))
-    # logger.info("✅ Recurring posts checker started")
 
 def main():
     """Main entry point"""
     logger.info("="*60)
-    logger.info("🚀 TELEGRAM SCHEDULER BOT v2.0 - ULTRA-FAST EDITION")
+    logger.info("🚀 TELEGRAM SCHEDULER BOT v2.0 - BALANCED EDITION")
     logger.info("="*60)
     
     # Initialize database
@@ -70,16 +66,16 @@ def main():
     # Add initial channels from environment (if any)
     if INITIAL_CHANNEL_IDS:
         for channel_id in INITIAL_CHANNEL_IDS:
-            if channel_id:  # Check if not empty
+            if channel_id:
                 channels_db.add_channel(channel_id)
         logger.info(f"📢 Loaded {len(INITIAL_CHANNEL_IDS)} channels from environment")
     else:
         logger.info("📢 No initial channels in environment")
     
-    # Initialize core systems with NEW classes
-    rate_limiter = AggressiveRateLimiter()  # CHANGED!
-    retry_system = SmartRetrySystem(skip_duration_minutes=3)  # UPDATED with parameter!
-    sender = ParallelSender(rate_limiter, retry_system)  # CHANGED! Added posts_db
+    # Initialize core systems with BALANCED classes
+    rate_limiter = BalancedRateLimiter()  # BALANCED version!
+    retry_system = SmartRetrySystem(skip_duration_minutes=5)
+    sender = HyperParallelSender(rate_limiter, retry_system, posts_db)
     
     # Initialize scheduler core
     scheduler = SchedulerCore(
@@ -100,18 +96,17 @@ def main():
     # Register handlers
     register_command_handlers(app, scheduler)
     register_message_handlers(app, scheduler)
-    register_callback_handlers(app, scheduler)  # NEW: Handle button clicks
+    register_callback_handlers(app, scheduler)
     
     logger.info("="*60)
-    logger.info("✅ TELEGRAM SCHEDULER v2.0 ULTRA-FAST STARTED")
+    logger.info("✅ TELEGRAM SCHEDULER v2.0 BALANCED MODE STARTED")
     logger.info(f"📢 Channels: {channels_db.get_channel_count()}")
     logger.info(f"👤 Admin ID: {ADMIN_ID}")
     logger.info(f"🌐 Timezone: UTC storage, IST display")
-    logger.info(f"⚡ Rate Limiter: Aggressive (30 msg/sec, burst 50)")
-    logger.info(f"🔄 Retry System: Time-based skip (5 min expiry)")
+    logger.info(f"⚡ Rate Limiter: Balanced (25 msg/sec, burst 20)")
+    logger.info(f"🔄 Retry System: Safe mode (skip after 3 failures)")
     logger.info(f"🚀 Sender: Hyper-parallel mode")
     logger.info(f"🚀 3 MODES: Bulk, Batch, Auto-Continuous")
-    logger.info(f"⚠️ Recurring posts: Not yet implemented")
     logger.info("="*60)
     
     # Start bot
