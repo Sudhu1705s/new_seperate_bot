@@ -54,11 +54,14 @@ class ParallelSender:
                 InlineKeyboardButton("🔄 Retry Now", callback_data=f"retry_channel:{channel_id}")
             ],
             [
-                InlineKeyboardButton("🗑️ Delete Channel", callback_data=f"delete_channel:{channel_id}"),
-                InlineKeyboardButton("✅ Keep & Resume", callback_data=f"resume_channel:{channel_id}")
+                InlineKeyboardButton("🗑️ Delete Permanently", callback_data=f"delete_channel:{channel_id}"),
+                InlineKeyboardButton("♻️ Move to Recycle Bin", callback_data=f"recycle_channel:{channel_id}")
             ],
             [
-                InlineKeyboardButton("📋 View All Failures", callback_data=f"failures:{channel_id}"),
+                InlineKeyboardButton("✅ Keep & Resume", callback_data=f"resume_channel:{channel_id}"),
+                InlineKeyboardButton("📋 View Failures", callback_data=f"failures:{channel_id}")
+            ],
+            [
                 InlineKeyboardButton("❌ Ignore", callback_data="ignore")
             ]
         ]
@@ -203,8 +206,11 @@ class ParallelSender:
             failure_count = self.retry_system.consecutive_failures.get(channel_id, 0)
             
             # Notify admin with actions on first failure OR when reaching threshold
+            # Notify admin on EVERY failure with increasing urgency
             if failure_count == 1:
                 asyncio.create_task(self._notify_first_failure(bot, channel_id, str(e)))
+            elif failure_count == 2:
+                asyncio.create_task(self._notify_second_failure(bot, channel_id, str(e)))
             elif failure_count >= 3 and channel_id not in self.admin_notified:
                 asyncio.create_task(self._notify_admin_with_actions(bot, channel_id, str(e), failure_count))
                 self.admin_notified[channel_id] = failure_count
@@ -340,5 +346,6 @@ class ParallelSender:
                         else:
                             logger.info(f"❌ Deferred retry failed: post {post_id} to {channel_id}")
                             break  # Stop retrying this channel
+
 
 
