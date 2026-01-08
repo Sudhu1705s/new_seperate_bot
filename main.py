@@ -75,7 +75,7 @@ def main():
     # Initialize core systems with BALANCED classes
     rate_limiter = BalancedRateLimiter()  # BALANCED version!
     retry_system = SmartRetrySystem(skip_duration_minutes=5)
-    sender = HyperParallelSender(rate_limiter, retry_system, posts_db)
+    sender = ParallelSender(rate_limiter, retry_system, posts_db)
     
     # Initialize scheduler core
     scheduler = SchedulerCore(
