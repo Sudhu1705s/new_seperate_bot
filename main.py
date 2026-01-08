@@ -2,7 +2,7 @@
 File: main.py
 Location: telegram_scheduler_bot/main.py
 Purpose: Main entry point for the bot
-FIXED: Removed recurring posts task until feature is implemented
+UPDATED: Uses new AggressiveRateLimiter and HyperParallelSender
 """
 
 import os
@@ -28,14 +28,14 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# FIXED: Proper imports
+# UPDATED: Import new classes
 from config.settings import BOT_TOKEN, ADMIN_ID, INITIAL_CHANNEL_IDS
 from database.db_manager import DatabaseManager
 from database.posts_db import PostsDB
 from database.channels_db import ChannelsDB
-from core.rate_limiter import AdaptiveRateLimiter
+from core.rate_limiter import AggressiveRateLimiter  # CHANGED!
 from core.retry_system import SmartRetrySystem
-from core.sender import ParallelSender
+from core.sender import HyperParallelSender  # CHANGED!
 from core.scheduler_core import SchedulerCore
 from handlers.command_handlers import register_command_handlers, stats_command, channels_command, list_posts
 from handlers.message_handlers import register_message_handlers
@@ -56,7 +56,7 @@ async def post_init(application):
 def main():
     """Main entry point"""
     logger.info("="*60)
-    logger.info("🚀 TELEGRAM SCHEDULER BOT v2.0")
+    logger.info("🚀 TELEGRAM SCHEDULER BOT v2.0 - ULTRA-FAST EDITION")
     logger.info("="*60)
     
     # Initialize database
@@ -76,10 +76,10 @@ def main():
     else:
         logger.info("📢 No initial channels in environment")
     
-    # Initialize core systems
-    rate_limiter = AdaptiveRateLimiter()
-    retry_system = SmartRetrySystem()
-    sender = ParallelSender(rate_limiter, retry_system)
+    # Initialize core systems with NEW classes
+    rate_limiter = AggressiveRateLimiter()  # CHANGED!
+    retry_system = SmartRetrySystem(skip_duration_minutes=5)  # UPDATED with parameter!
+    sender = HyperParallelSender(rate_limiter, retry_system, posts_db)  # CHANGED! Added posts_db
     
     # Initialize scheduler core
     scheduler = SchedulerCore(
@@ -103,12 +103,15 @@ def main():
     register_callback_handlers(app, scheduler)  # NEW: Handle button clicks
     
     logger.info("="*60)
-    logger.info("✅ TELEGRAM SCHEDULER v2.0 STARTED")
+    logger.info("✅ TELEGRAM SCHEDULER v2.0 ULTRA-FAST STARTED")
     logger.info(f"📢 Channels: {channels_db.get_channel_count()}")
     logger.info(f"👤 Admin ID: {ADMIN_ID}")
-    logger.info(f"🌍 Timezone: UTC storage, IST display")
+    logger.info(f"🌐 Timezone: UTC storage, IST display")
+    logger.info(f"⚡ Rate Limiter: Aggressive (30 msg/sec, burst 50)")
+    logger.info(f"🔄 Retry System: Time-based skip (5 min expiry)")
+    logger.info(f"🚀 Sender: Hyper-parallel mode")
     logger.info(f"🚀 3 MODES: Bulk, Batch, Auto-Continuous")
-    logger.info(f"⚠️  Recurring posts: Not yet implemented")
+    logger.info(f"⚠️ Recurring posts: Not yet implemented")
     logger.info("="*60)
     
     # Start bot
