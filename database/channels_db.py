@@ -3,6 +3,7 @@ File: database/channels_db.py
 Location: telegram_scheduler_bot/database/channels_db.py
 Purpose: All channel database operations
 FIXED: KeyError 0 - proper tuple/dict handling + empty result checks
+FIXED: get_active_channels() now returns channel IDs correctly
 """
 
 from datetime import datetime
@@ -61,6 +62,36 @@ class ChannelsDB:
         except Exception as e:
             logger.error(f"Error getting value {key_or_index} from row: {e}")
             return None
+    
+    def _extract_channel_id(self, row):
+        """
+        FIXED: Universal channel_id extractor for both SQLite Row and PostgreSQL tuple
+        Handles both index [0] and key ['channel_id'] access
+        """
+        if row is None:
+            return None
+        
+        # Try dict-like access first (SQLite Row)
+        try:
+            return row['channel_id']
+        except (KeyError, TypeError):
+            pass
+        
+        # Try tuple/index access (PostgreSQL or plain tuple)
+        try:
+            return row[0]
+        except (KeyError, IndexError, TypeError):
+            pass
+        
+        # Last resort: check if it has a get method
+        try:
+            if hasattr(row, 'get'):
+                return row.get('channel_id')
+        except:
+            pass
+        
+        logger.error(f"Failed to extract channel_id from row: {type(row)}, {row}")
+        return None
     
     def add_channel(self, channel_id, channel_name=None):
         """Add a new channel"""
@@ -240,12 +271,28 @@ class ChannelsDB:
             return c.fetchall()
     
     def get_active_channels(self):
-        """Get only active channels"""
+        """
+        Get only active channels
+        FIXED: Universal handling for both SQLite Row and PostgreSQL tuple
+        """
         with self.db.get_db() as conn:
             c = conn.cursor()
             c.execute('SELECT channel_id FROM channels WHERE active = 1 ORDER BY added_at')
             rows = c.fetchall()
-            return [row['channel_id'] for row in c.fetchall()]
+            
+            if not rows:
+                logger.debug("No active channels found")
+                return []
+            
+            # FIXED: Use universal extractor instead of direct [0] access
+            channel_ids = []
+            for row in rows:
+                channel_id = self._extract_channel_id(row)
+                if channel_id:
+                    channel_ids.append(channel_id)
+            
+            logger.debug(f"📡 Found {len(channel_ids)} active channels")
+            return channel_ids
     
     def update_channel_numbers(self):
         """
@@ -265,22 +312,12 @@ class ChannelsDB:
                     logger.debug("No active channels found")
                     return
                 
-                # FIXED: Safely enumerate rows
+                # FIXED: Safely enumerate rows using universal extractor
                 for idx, row in enumerate(rows, 1):
-                    # Handle both dict and tuple
                     if row is None:
                         continue
                     
-                    try:
-                        # Try index access first (works for both)
-                        channel_id = row[0]
-                    except (KeyError, IndexError, TypeError):
-                        # Try dict access
-                        try:
-                            channel_id = row.get('channel_id') if hasattr(row, 'get') else None
-                        except:
-                            channel_id = None
-                    
+                    channel_id = self._extract_channel_id(row)
                     if channel_id:
                         self.channel_number_map[idx] = channel_id
                 
@@ -317,7 +354,9 @@ class ChannelsDB:
             
             c.execute(f'SELECT failure_count FROM channels WHERE channel_id = {ph}', (channel_id,))
             result = c.fetchone()
-            failure_count = result[0] if result else 0
+            
+            # FIXED: Use universal extractor
+            failure_count = self._extract_channel_id(result) if result else 0
             
             conn.commit()
             return failure_count >= self.FAILURE_THRESHOLD
@@ -377,4 +416,3 @@ class ChannelsDB:
             c = conn.cursor()
             c.execute('SELECT channel_id, channel_name FROM channels WHERE in_skip_list = 1')
             return c.fetchall()
-
