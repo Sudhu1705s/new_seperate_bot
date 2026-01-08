@@ -278,3 +278,46 @@ class ParallelSender:
             'failed_count': len(failed_sends),
             'retry_success': retry_success if failed_sends else 0
         }
+async def process_deferred_retries(self, bot, db_manager):
+    """
+    Process deferred retries for failed channels
+    Called when bot is idle
+    """
+    # Get channels that failed and are ready for retry
+    expired_channels = self.retry_system.get_expired_skip_channels()
+    
+    if not expired_channels:
+        return
+    
+    logger.info(f"🔄 Processing {len(expired_channels)} deferred retries")
+    
+    # Get recent failed posts
+    ph = self._ph(db_manager)
+    with db_manager.get_db() as conn:
+        c = conn.cursor()
+        
+        for channel_id in expired_channels:
+            # Get last few failed posts for this channel
+            c.execute(f'''
+                SELECT DISTINCT post_id FROM channel_failures 
+                WHERE channel_id = {ph}
+                ORDER BY failed_at DESC LIMIT 5
+            ''', (channel_id,))
+            
+            failed_posts = c.fetchall()
+            
+            for post_row in failed_posts:
+                post_id = post_row[0]
+                
+                # Get post data
+                c.execute(f'SELECT * FROM posts WHERE id = {ph}', (post_id,))
+                post = c.fetchone()
+                
+                if post:
+                    # Try to send
+                    success = await self.send_post_to_channel(bot, post, channel_id)
+                    if success:
+                        logger.info(f"✅ Deferred retry success: post {post_id} to {channel_id}")
+                    else:
+                        logger.info(f"❌ Deferred retry failed: post {post_id} to {channel_id}")
+                        break  # Stop retrying this channel
