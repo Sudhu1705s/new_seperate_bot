@@ -93,6 +93,25 @@ class ParallelSender:
             )
         except Exception as e:
             logger.error(f"Failed to notify admin about first failure: {e}")
+
+    async def _notify_second_failure(self, bot, channel_id, error_message):
+        """Notify admin on second failure - warning level"""
+        from config.settings import ADMIN_ID
+        
+        message = f"⚠️ <b>Channel Failed AGAIN (2nd Time)</b>\n\n"
+        message += f"Channel: <code>{channel_id}</code>\n"
+        message += f"Error: <code>{error_message[:100]}</code>\n\n"
+        message += f"🔄 Will retry one more time...\n"
+        message += f"⚠️ If this fails again, you'll get action options."
+        
+        try:
+            await bot.send_message(
+                chat_id=ADMIN_ID,
+                text=message,
+                parse_mode='HTML'
+            )
+        except Exception as e:
+            logger.error(f"Failed to notify admin about second failure: {e}")
     
     def _get_post_value(self, post, key, default=None):
         """Safely get value from post (dict or tuple)"""
@@ -321,4 +340,5 @@ class ParallelSender:
                         else:
                             logger.info(f"❌ Deferred retry failed: post {post_id} to {channel_id}")
                             break  # Stop retrying this channel
+
 
