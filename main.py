@@ -79,7 +79,7 @@ def main():
     # Initialize core systems with NEW classes
     rate_limiter = AggressiveRateLimiter()  # CHANGED!
     retry_system = SmartRetrySystem(skip_duration_minutes=5)  # UPDATED with parameter!
-    sender = HyperParallelSender(rate_limiter, retry_system)  # CHANGED! Added posts_db
+    sender = ParallelSender(rate_limiter, retry_system)  # CHANGED! Added posts_db
     
     # Initialize scheduler core
     scheduler = SchedulerCore(
