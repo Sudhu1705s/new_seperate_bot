@@ -298,17 +298,19 @@ class PostsDB:
         return None
     
     def get_next_scheduled_post(self):
-        """Get time of next scheduled post"""
-        ph = self._ph()
+        """
+        Get time of next scheduled post
+        FIXED: Handle both string and datetime return
+        """
         with self.db.get_db() as conn:
             c = conn.cursor()
-            c.execute(f'SELECT scheduled_time FROM posts WHERE posted = {ph} ORDER BY scheduled_time LIMIT 1', (0,))
+            c.execute('SELECT scheduled_time FROM posts WHERE posted = 0 ORDER BY scheduled_time LIMIT 1')
             result = c.fetchone()
-            if result:
-                return datetime.fromisoformat(result['scheduled_time'])
-            return None
             
-            sscheduled_value = result['scheduled_time']
+            if not result:
+                return None
+            
+            scheduled_value = result[0]
             
             # If already datetime, return it
             if isinstance(scheduled_value, datetime):
@@ -381,7 +383,3 @@ class PostsDB:
                       'posted_at', 'created_at', 'batch_id', 'paused']
             
             return self._rows_to_dicts(rows, columns)
-
-
-
-
