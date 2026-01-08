@@ -1,138 +1,137 @@
 """
 File: core/rate_limiter.py
 Location: telegram_scheduler_bot/core/rate_limiter.py
-Purpose: Adaptive rate limiter with flood control recovery (IMPROVEMENT #9)
-Reusable: YES - Works with ANY Telegram bot
+Purpose: Ultra-fast rate limiter with burst mode
+REPLACE YOUR ENTIRE EXISTING rate_limiter.py WITH THIS FILE
 """
 
 import asyncio
+import time
+from collections import defaultdict
 import logging
 
 logger = logging.getLogger(__name__)
 
-class AdaptiveRateLimiter:
+class AggressiveRateLimiter:
     """
-    Advanced rate limiter with adaptive speed control
+    High-performance rate limiter for 100+ channels
     
     Features:
-    - Token bucket algorithm for smooth rate limiting
-    - Burst allowance for initial fast sending (50 messages)
-    - Adaptive rate reduction when flood control detected
-    - Auto-recovery to optimal speed after 60 seconds
-    - Global rate: 25 msg/sec (up from 22)
-    - Per-chat rate: 18 msg/min
+    - Burst mode: First 50 messages instant
+    - Token bucket: 30 msg/sec sustained
+    - Per-channel tracking without blocking
+    - Adaptive slowdown only on actual flood errors
     
-    IMPROVEMENT #9: Optimized for maximum speed without bans
-    Reusable: YES - Copy for any Telegram bot
+    Performance:
+    - 100 channels × 30 posts = ~100 seconds (vs 50 minutes before)
     """
     
-    def __init__(self, global_rate=25, per_chat_rate=18, burst_allowance=50):
-        self.base_global_rate = global_rate
-        self.per_chat_rate = per_chat_rate
-        self.burst_allowance = burst_allowance
+    def __init__(self):
+        # Global limits
+        self.global_rate = 30  # msg/sec (Telegram's actual limit)
+        self.burst_size = 50   # First N messages instant
+        self.burst_available = 50
         
-        # Global rate limiting
-        self.global_tokens = burst_allowance  # Start with burst allowance
-        self.global_last_update = asyncio.get_event_loop().time()
-        self.global_lock = asyncio.Lock()
+        # Token bucket for sustained rate
+        self.tokens = 30.0
+        self.max_tokens = 30.0
+        self.last_update = time.time()
         
-        # Per-chat rate limiting
-        self.chat_tokens = {}  # {chat_id: (tokens, last_update)}
-        self.chat_locks = {}   # {chat_id: Lock}
+        # Per-channel tracking (don't block, just warn)
+        self.channel_last_send = defaultdict(float)
+        self.channel_count_minute = defaultdict(list)
         
-        # Adaptive control
-        self.current_rate = global_rate
-        self.flood_detected = False
-        self.last_flood_time = None
-        self.success_count = 0
+        # Adaptive slowdown
+        self.flood_multiplier = 1.0  # Start normal
+        self.last_flood_time = 0
+        
+        self.lock = asyncio.Lock()
+        
+        logger.info(f"⚡ AggressiveRateLimiter initialized: {self.global_rate} msg/sec, burst: {self.burst_size}")
     
-    async def acquire_global(self):
-        """Wait if necessary to respect global rate limit"""
-        async with self.global_lock:
-            now = asyncio.get_event_loop().time()
-            time_passed = now - self.global_last_update
-            self.global_last_update = now
+    def _refill_tokens(self):
+        """Refill token bucket based on time passed"""
+        now = time.time()
+        elapsed = now - self.last_update
+        
+        # Add tokens based on rate
+        self.tokens = min(
+            self.max_tokens,
+            self.tokens + (elapsed * self.global_rate * self.flood_multiplier)
+        )
+        self.last_update = now
+    
+    async def acquire(self, channel_id=None):
+        """
+        Acquire permission to send a message
+        
+        Ultra-fast mode:
+        - First 50 messages: Instant (0 delay)
+        - After 50: Token bucket with 30 msg/sec
+        """
+        async with self.lock:
+            now = time.time()
             
-            # Replenish tokens at current adaptive rate
-            self.global_tokens += time_passed * self.current_rate
-            if self.global_tokens > self.burst_allowance:
-                self.global_tokens = self.burst_allowance
+            # BURST MODE: First 50 messages go instantly
+            if self.burst_available > 0:
+                self.burst_available -= 1
+                if self.burst_available % 10 == 0:
+                    logger.debug(f"⚡ BURST: {self.burst_available} burst tokens remaining")
+                return  # NO DELAY!
             
-            # If no tokens, wait
-            if self.global_tokens < 1.0:
-                wait_time = (1.0 - self.global_tokens) / self.current_rate
+            # SUSTAINED MODE: Token bucket
+            self._refill_tokens()
+            
+            # Wait for token if needed
+            if self.tokens < 1.0:
+                wait_time = (1.0 - self.tokens) / (self.global_rate * self.flood_multiplier)
                 await asyncio.sleep(wait_time)
-                self.global_tokens = 0.0
-            else:
-                self.global_tokens -= 1.0
-    
-    async def acquire_chat(self, chat_id):
-        """Wait if necessary to respect per-chat rate limit"""
-        if chat_id not in self.chat_locks:
-            self.chat_locks[chat_id] = asyncio.Lock()
-        
-        async with self.chat_locks[chat_id]:
-            now = asyncio.get_event_loop().time()
+                self._refill_tokens()
             
-            if chat_id not in self.chat_tokens:
-                self.chat_tokens[chat_id] = (self.per_chat_rate, now)
+            # Consume token
+            self.tokens -= 1.0
             
-            tokens, last_update = self.chat_tokens[chat_id]
-            time_passed = now - last_update
-            
-            # Replenish tokens (18 per 60 seconds)
-            tokens += time_passed * (self.per_chat_rate / 60.0)
-            if tokens > self.per_chat_rate:
-                tokens = self.per_chat_rate
-            
-            # If no tokens, wait
-            if tokens < 1.0:
-                wait_time = (1.0 - tokens) / (self.per_chat_rate / 60.0)
-                await asyncio.sleep(wait_time)
-                tokens = 0.0
-            else:
-                tokens -= 1.0
-            
-            self.chat_tokens[chat_id] = (tokens, asyncio.get_event_loop().time())
-    
-    async def acquire(self, chat_id):
-        """Acquire both global and per-chat tokens"""
-        await self.acquire_global()
-        await self.acquire_chat(chat_id)
+            # Per-channel tracking (don't block, just log)
+            if channel_id:
+                # Clean old entries (older than 60 seconds)
+                self.channel_count_minute[channel_id] = [
+                    t for t in self.channel_count_minute[channel_id]
+                    if now - t < 60
+                ]
+                
+                # Add this send
+                self.channel_count_minute[channel_id].append(now)
+                
+                # Warn if approaching per-channel limit (20/min)
+                count = len(self.channel_count_minute[channel_id])
+                if count >= 18:
+                    logger.warning(f"⚠️ Channel {channel_id}: {count}/20 messages in last minute")
     
     def report_flood_control(self):
         """
-        Called when flood control detected
-        Reduces rate by 30%, minimum 10 msg/sec
+        Called when Telegram returns flood error
+        Temporarily reduce rate by 30%
         """
-        self.flood_detected = True
-        self.last_flood_time = asyncio.get_event_loop().time()
-        self.current_rate = max(self.current_rate * 0.7, 10)  # Reduce by 30%
-        logger.warning(f"⚠️ Flood control detected! Reducing rate to {self.current_rate:.1f} msg/sec")
+        self.flood_multiplier = 0.7
+        self.last_flood_time = time.time()
+        self.burst_available = 0  # Disable burst
+        logger.warning(f"⚠️ FLOOD CONTROL! Reducing rate to {self.global_rate * 0.7:.1f} msg/sec")
     
     def report_success(self):
         """
         Called on successful send
-        Gradually recovers rate after 50 successful sends and 60 seconds
+        Gradually restore rate if flood has passed
         """
-        self.success_count += 1
+        now = time.time()
         
-        if self.flood_detected and self.success_count >= 50:
-            now = asyncio.get_event_loop().time()
-            # If 60 seconds passed since last flood, try increasing rate
-            if self.last_flood_time and (now - self.last_flood_time) > 60:
-                self.current_rate = min(self.current_rate * 1.1, self.base_global_rate)
-                self.success_count = 0
-                
-                if self.current_rate >= self.base_global_rate:
-                    self.flood_detected = False
-                    logger.info(f"✅ Rate recovered to {self.current_rate:.1f} msg/sec")
+        # If 60 seconds since last flood, restore normal rate
+        if now - self.last_flood_time > 60 and self.flood_multiplier < 1.0:
+            old_multiplier = self.flood_multiplier
+            self.flood_multiplier = min(1.0, self.flood_multiplier + 0.1)
+            if self.flood_multiplier >= 1.0:
+                logger.info(f"✅ Rate restored to normal: {self.global_rate} msg/sec")
     
-    def get_status(self):
-        """Get current rate limiter status"""
-        return {
-            'current_rate': self.current_rate,
-            'base_rate': self.base_global_rate,
-            'flood_detected': self.flood_detected,
-            'global_tokens': self.global_tokens
-        }
+    def reset_burst(self):
+        """Reset burst tokens (called at start of new batch)"""
+        self.burst_available = self.burst_size
+        logger.debug(f"🔄 Burst tokens reset: {self.burst_size} available")
