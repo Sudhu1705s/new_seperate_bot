@@ -3,6 +3,7 @@ File: database/posts_db.py
 Location: telegram_scheduler_bot/database/posts_db.py
 Purpose: All post database operations
 FIXED: PostgreSQL compatibility - all queries return consistent dict format
+FIXED: Universal fetchone() handling for both SQLite Row and PostgreSQL tuple
 """
 
 from datetime import datetime, timedelta
@@ -24,6 +25,36 @@ class PostsDB:
         """Placeholder helper for PostgreSQL (%s) vs SQLite (?)"""
         return '%s' if self.db.is_postgres() else '?'
     
+    def _fetchone_value(self, cursor, column_index=0, column_name=None):
+        """
+        Safely fetch a single value from fetchone() result
+        Handles both dict-like Row objects (SQLite) and tuples (PostgreSQL)
+        """
+        result = cursor.fetchone()
+        if not result:
+            return None
+        
+        # Try dict-like access first if column name provided
+        if column_name:
+            try:
+                return result[column_name]
+            except (KeyError, TypeError):
+                pass
+        
+        # Try tuple/index access
+        try:
+            return result[column_index]
+        except (KeyError, IndexError, TypeError):
+            # Last resort: try to convert to dict and access
+            try:
+                if hasattr(result, 'keys'):
+                    return dict(result)[list(result.keys())[column_index]]
+            except:
+                pass
+        
+        logger.error(f"Failed to extract value from result: {type(result)}, {result}")
+        return None
+    
     def _row_to_dict(self, row, columns):
         """
         Convert database row to dictionary
@@ -43,7 +74,9 @@ class PostsDB:
             result = row
         
         # CRITICAL FIX: Ensure datetime fields are datetime objects, not strings
-        datetime_fields = ['scheduled_time', 'posted_at', 'created_at', 'last_success', 'last_failure', 'deleted_at', 'added_at', 'failed_at', 'next_scheduled', 'last_posted']
+        datetime_fields = ['scheduled_time', 'posted_at', 'created_at', 'last_success', 
+                          'last_failure', 'deleted_at', 'added_at', 'failed_at', 
+                          'next_scheduled', 'last_posted']
         
         for field in datetime_fields:
             if field in result and result[field] is not None:
@@ -211,8 +244,12 @@ class PostsDB:
             
             # Calculate intervals if preserving
             if preserve_intervals and len(posts) > 1:
-                first_time = datetime.fromisoformat(posts[0]['scheduled_time'])
-                last_time = datetime.fromisoformat(posts[-1]['scheduled_time'])
+                first_time = posts[0]['scheduled_time']
+                last_time = posts[-1]['scheduled_time']
+                if isinstance(first_time, str):
+                    first_time = datetime.fromisoformat(first_time)
+                if isinstance(last_time, str):
+                    last_time = datetime.fromisoformat(last_time)
                 total_duration = (last_time - first_time).total_seconds() / 60
                 interval = total_duration / (len(posts) - 1) if len(posts) > 1 else 0
             else:
@@ -281,10 +318,10 @@ class PostsDB:
                 WHERE posted = 0 AND batch_id IS NOT NULL 
                 ORDER BY scheduled_time DESC LIMIT 1
             ''')
-            result = c.fetchone()
             
-            if result and result[0]:
-                batch_id = result[0]
+            batch_id = self._fetchone_value(c, column_index=0)
+            
+            if batch_id:
                 c.execute(f'SELECT * FROM posts WHERE batch_id = {self._ph()} ORDER BY scheduled_time',
                          (batch_id,))
                 rows = c.fetchall()
@@ -300,27 +337,16 @@ class PostsDB:
     def get_next_scheduled_post(self):
         """
         Get time of next scheduled post
-        FIXED: Handle both dict-like Row objects and tuples
+        FIXED: Universal handling for both SQLite Row and PostgreSQL tuple
         """
         with self.db.get_db() as conn:
             c = conn.cursor()
             c.execute('SELECT scheduled_time FROM posts WHERE posted = 0 ORDER BY scheduled_time LIMIT 1')
-            result = c.fetchone()
             
-            if not result:
+            scheduled_value = self._fetchone_value(c, column_index=0, column_name='scheduled_time')
+            
+            if not scheduled_value:
                 return None
-            
-            # Handle both dict-like (SQLite Row) and tuple (PostgreSQL)
-            try:
-                # Try dict-like access first (SQLite Row object)
-                scheduled_value = result['scheduled_time']
-            except (KeyError, TypeError):
-                # Fall back to tuple access (PostgreSQL or plain tuple)
-                try:
-                    scheduled_value = result[0]
-                except (IndexError, KeyError, TypeError):
-                    logger.error(f"Unable to access scheduled_time from result: {type(result)}, {result}")
-                    return None
             
             # If already datetime, return it
             if isinstance(scheduled_value, datetime):
@@ -346,7 +372,7 @@ class PostsDB:
             cutoff = (datetime.utcnow() - timedelta(minutes=minutes_old)).isoformat()
             
             c.execute(f'SELECT COUNT(*) FROM posts WHERE posted = 1 AND posted_at < {ph}', (cutoff,))
-            count_to_delete = c.fetchone()[0]
+            count_to_delete = self._fetchone_value(c, column_index=0) or 0
             
             if count_to_delete > 0:
                 c.execute(f'DELETE FROM posts WHERE posted = 1 AND posted_at < {ph}', (cutoff,))
@@ -363,12 +389,15 @@ class PostsDB:
         """Get post statistics"""
         with self.db.get_db() as conn:
             c = conn.cursor()
+            
             c.execute('SELECT COUNT(*) FROM posts')
-            total_posts = c.fetchone()[0]
+            total_posts = self._fetchone_value(c, column_index=0) or 0
+            
             c.execute('SELECT COUNT(*) FROM posts WHERE posted = 0')
-            pending_posts = c.fetchone()[0]
+            pending_posts = self._fetchone_value(c, column_index=0) or 0
+            
             c.execute('SELECT COUNT(*) FROM posts WHERE posted = 1')
-            posted_posts = c.fetchone()[0]
+            posted_posts = self._fetchone_value(c, column_index=0) or 0
             
             return {
                 'total': total_posts,
@@ -393,4 +422,3 @@ class PostsDB:
                       'posted_at', 'created_at', 'batch_id', 'paused']
             
             return self._rows_to_dicts(rows, columns)
-
