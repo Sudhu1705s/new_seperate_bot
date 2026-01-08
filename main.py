@@ -35,7 +35,7 @@ from database.posts_db import PostsDB
 from database.channels_db import ChannelsDB
 from core.rate_limiter import AggressiveRateLimiter  # CHANGED!
 from core.retry_system import SmartRetrySystem
-from core.sender import HyperParallelSender  # CHANGED!
+from core.sender import ParallelSender  # CHANGED!
 from core.scheduler_core import SchedulerCore
 from handlers.command_handlers import register_command_handlers, stats_command, channels_command, list_posts
 from handlers.message_handlers import register_message_handlers
@@ -79,7 +79,7 @@ def main():
     # Initialize core systems with NEW classes
     rate_limiter = AggressiveRateLimiter()  # CHANGED!
     retry_system = SmartRetrySystem(skip_duration_minutes=5)  # UPDATED with parameter!
-    sender = HyperParallelSender(rate_limiter, retry_system, posts_db)  # CHANGED! Added posts_db
+    sender = HyperParallelSender(rate_limiter, retry_system)  # CHANGED! Added posts_db
     
     # Initialize scheduler core
     scheduler = SchedulerCore(
