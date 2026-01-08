@@ -160,11 +160,31 @@ class SchedulerCore:
                 
                 await asyncio.sleep(1)
     
+        """
+    File: core/scheduler_core.py
+    Location: telegram_scheduler_bot/core/scheduler_core.py
+
+    ONLY REPLACE THE background_poster METHOD in your existing file
+    Find the existing async def background_poster(self, bot): method
+    and replace it with this:
+    """
+
+    """
+    File: core/scheduler_core.py
+    Location: telegram_scheduler_bot/core/scheduler_core.py
+
+    ONLY REPLACE THE background_poster METHOD in your existing file
+    Find the existing async def background_poster(self, bot): method
+    and replace it with this:
+    """
+
     async def background_poster(self, bot):
         """
         Background task that continuously checks for due posts
+        ENHANCED: Processes deferred retries when idle
         """
         cleanup_counter = 0
+        idle_retry_counter = 0  # NEW: Track idle time for retries
         
         while True:
             try:
@@ -177,10 +197,24 @@ class SchedulerCore:
                     if time_until_next > 0:
                         sleep_duration = min(max(time_until_next - 2, 1), 15)
                         logger.info(f"⏰ Next post in {time_until_next:.1f}s, sleeping {sleep_duration:.1f}s")
+                        
+                        # NEW: If idle for long enough, process deferred retries
+                        if time_until_next > 60:
+                            idle_retry_counter += 1
+                            if idle_retry_counter >= 2:  # Every ~30 seconds when idle
+                                logger.debug("🔄 Bot idle, checking deferred retries...")
+                                await self.sender.process_deferred_retries(bot, self.db_manager)
+                                idle_retry_counter = 0
+                        else:
+                            idle_retry_counter = 0
+                        
                         await asyncio.sleep(sleep_duration)
                     else:
                         await asyncio.sleep(1)
                 else:
+                    # No posts at all - perfect time for deferred retries
+                    logger.debug("📭 No posts scheduled, processing deferred retries...")
+                    await self.sender.process_deferred_retries(bot, self.db_manager)
                     await asyncio.sleep(10)
                 
                 # Auto-cleanup old posts
@@ -190,7 +224,6 @@ class SchedulerCore:
                     cleanup_counter = 0
                     
             except Exception as e:
-                # ULTRA-DETAILED ERROR LOGGING
                 import traceback
                 logger.error(f"❌❌❌ Background task error: {e}")
                 logger.error(f"Full traceback:\n{traceback.format_exc()}")
