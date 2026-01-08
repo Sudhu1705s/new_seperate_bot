@@ -109,7 +109,26 @@ async def delete_channel_action(query, context, scheduler, channel_id):
             f"❌ Failed to delete channel <code>{channel_id}</code>",
             parse_mode='HTML'
         )
-
+async def recycle_channel_action(query, context, scheduler, channel_id):
+    """Move channel to recycle bin"""
+    if scheduler.channels_db.move_to_recycle_bin(channel_id):
+        scheduler.retry_system.remove_from_skip_list(channel_id)
+        
+        await query.edit_message_text(
+            f"♻️ <b>Moved to Recycle Bin</b>\n\n"
+            f"Channel: <code>{channel_id}</code>\n\n"
+            f"✅ Removed from active channels\n"
+            f"✅ Saved in recycle bin\n"
+            f"💾 Can be restored later\n\n"
+            f"Posts will no longer be sent here.",
+            parse_mode='HTML'
+        )
+    else:
+        await query.edit_message_text(
+            f"❌ Failed to move channel to recycle bin",
+            parse_mode='HTML'
+        )
+        
 async def resume_channel_action(query, context, scheduler, channel_id):
     """Keep channel but remove from skip list"""
     scheduler.channels_db.mark_channel_in_skip_list(channel_id, False)
