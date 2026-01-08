@@ -79,7 +79,7 @@ class SmartRetrySystem:
             self.consecutive_failures[channel_id] = self.consecutive_failures.get(channel_id, 0) + 1
         
         # Add to skip list with timestamp
-        if error_type == 'permanent' or self.consecutive_failures.get(channel_id, 0) >= 3:
+        if error_type == 'permanent' or self.consecutive_failures.get(channel_id, 0) >= 5:
             self.skip_list[channel_id] = datetime.utcnow()
             logger.warning(f"⏸️ Channel {channel_id} added to skip list for {self.skip_duration_minutes} min")
     
@@ -180,5 +180,6 @@ class SmartRetrySystem:
         if channel_id in self.skip_list:
             del self.skip_list[channel_id]
             logger.info(f"🔄 Channel {channel_id} removed from skip list")
+
 
 
