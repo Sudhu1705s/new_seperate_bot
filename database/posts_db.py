@@ -300,7 +300,7 @@ class PostsDB:
     def get_next_scheduled_post(self):
         """
         Get time of next scheduled post
-        FIXED: Handle both string and datetime return
+        FIXED: Handle both dict-like Row objects and tuples
         """
         with self.db.get_db() as conn:
             c = conn.cursor()
@@ -310,7 +310,17 @@ class PostsDB:
             if not result:
                 return None
             
-            scheduled_value = result[0]
+            # Handle both dict-like (SQLite Row) and tuple (PostgreSQL)
+            try:
+                # Try dict-like access first (SQLite Row object)
+                scheduled_value = result['scheduled_time']
+            except (KeyError, TypeError):
+                # Fall back to tuple access (PostgreSQL or plain tuple)
+                try:
+                    scheduled_value = result[0]
+                except (IndexError, KeyError, TypeError):
+                    logger.error(f"Unable to access scheduled_time from result: {type(result)}, {result}")
+                    return None
             
             # If already datetime, return it
             if isinstance(scheduled_value, datetime):
@@ -321,10 +331,10 @@ class PostsDB:
                 try:
                     return datetime.fromisoformat(scheduled_value)
                 except Exception as e:
-                    logger.error(f"Failed to parse scheduled_time in get_next_scheduled_post: {scheduled_value}, error: {e}")
+                    logger.error(f"Failed to parse scheduled_time: {scheduled_value}, error: {e}")
                     return None
             
-            logger.error(f"Invalid scheduled_time type in get_next_scheduled_post: {type(scheduled_value)}")
+            logger.error(f"Invalid scheduled_time type: {type(scheduled_value)}")
             return None
     
     def cleanup_old_posts(self, minutes_old=30):
@@ -383,3 +393,4 @@ class PostsDB:
                       'posted_at', 'created_at', 'batch_id', 'paused']
             
             return self._rows_to_dicts(rows, columns)
+
