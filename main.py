@@ -35,7 +35,7 @@ from database.posts_db import PostsDB
 from database.channels_db import ChannelsDB
 from core.rate_limiter import BalancedRateLimiter  # CHANGED to Balanced!
 from core.retry_system import SmartRetrySystem
-from core.sender import HyperParallelSender
+from core.sender import ParallelSender
 from core.scheduler_core import SchedulerCore
 from handlers.command_handlers import register_command_handlers, stats_command, channels_command, list_posts
 from handlers.message_handlers import register_message_handlers
