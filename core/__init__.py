@@ -9,5 +9,4 @@ from .retry_system import SmartRetrySystem
 from .sender import ParallelSender
 from .scheduler_core import SchedulerCore
 
-
-__all__ = ['AdaptiveRateLimiter', 'SmartRetrySystem', 'ParallelSender', 'SchedulerCore']
+__all__ = ['AggressiveRateLimiter', 'SmartRetrySystem', 'ParallelSender', 'SchedulerCore']
