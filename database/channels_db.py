@@ -388,17 +388,73 @@ class ChannelsDB:
             ''', (channel_id,))
             return c.fetchall()
     
-    def get_channels_with_failures(self):
-        """Get channels that have failure counts > 0"""
+    """
+    File: database/channels_db.py
+    Location: telegram_scheduler_bot/database/channels_db.py
+    Purpose: All channel database operations
+    FIXED: PostgreSQL DISTINCT + ORDER BY compatibility
+    REPLACE the get_channel_failures method in your existing file
+    """
+    
+    # Find this method in your channels_db.py and replace it:
+    
+    def get_channel_failures(self, channel_id, limit=10):
+        """
+        Get recent failures for a channel
+        FIXED: PostgreSQL compatibility with DISTINCT
+        """
         with self.db.get_db() as conn:
             c = conn.cursor()
-            c.execute('''
-                SELECT channel_id, channel_name, failure_count, last_failure, in_skip_list 
-                FROM channels 
-                WHERE failure_count > 0 
-                ORDER BY failure_count DESC
-            ''')
+            ph = self._ph()
+            
+            # FIXED: Don't use DISTINCT, or if using it, include ORDER BY column in SELECT
+            c.execute(f'''
+                SELECT * FROM channel_failures 
+                WHERE channel_id = {ph}
+                ORDER BY failed_at DESC 
+                LIMIT {limit}
+            ''', (channel_id,))
             return c.fetchall()
+    
+    
+    # Also check if you have this method - if it uses DISTINCT + ORDER BY, fix it too:
+    
+    def get_last_batch(self):
+        """
+        Get posts from the last batch
+        FIXED: PostgreSQL DISTINCT + ORDER BY compatibility
+        """
+        with self.db.get_db() as conn:
+            c = conn.cursor()
+            
+            # FIXED: Include order by column in SELECT when using DISTINCT
+            c.execute('''
+                SELECT DISTINCT batch_id, scheduled_time
+                FROM posts 
+                WHERE posted = 0 AND batch_id IS NOT NULL 
+                ORDER BY scheduled_time DESC 
+                LIMIT 1
+            ''')
+            result = c.fetchone()
+            
+            if result:
+                batch_id = self._fetchone_value(c, column_index=0) if hasattr(self, '_fetchone_value') else result[0]
+                
+                if batch_id:
+                    c.execute(f'SELECT * FROM posts WHERE batch_id = {self._ph()} ORDER BY scheduled_time',
+                             (batch_id,))
+                    rows = c.fetchall()
+                    
+                    columns = ['id', 'message', 'media_type', 'media_file_id', 'caption',
+                              'scheduled_time', 'posted', 'total_channels', 'successful_posts',
+                              'posted_at', 'created_at', 'batch_id', 'paused']
+                    
+                    if hasattr(self, '_rows_to_dicts'):
+                        return self._rows_to_dicts(rows, columns)
+                    else:
+                        return rows
+            
+            return None
     
     def mark_channel_in_skip_list(self, channel_id, in_skip_list=True):
         """Mark channel as in skip list"""
@@ -416,3 +472,4 @@ class ChannelsDB:
             c = conn.cursor()
             c.execute('SELECT channel_id, channel_name FROM channels WHERE in_skip_list = 1')
             return c.fetchall()
+
