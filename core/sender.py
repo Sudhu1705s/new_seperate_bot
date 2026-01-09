@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 # NOTE: This class was previously called ParallelSender
 # Just rename it when importing, or keep both names
 
-class HyperParallelSender:
+class ParallelSender:
     """
     Ultra-fast parallel sender for 100+ channels
     
@@ -389,3 +389,4 @@ class HyperParallelSender:
         
         logger.info(f"✅ Deferred retries: {retry_success} success, {retry_failed} exhausted, {len(remaining_retries)} remaining")
         return retry_success
+
